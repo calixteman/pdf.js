@@ -370,8 +370,9 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
     source.initialData = pdfDataRangeTransport.initialData;
     source.progressiveDone = pdfDataRangeTransport.progressiveDone;
   }
+
   return worker.messageHandler
-    .sendWithPromise("GetDocRequest", {
+               .sendWithPromise("GetDocRequest", {
       docId,
       apiVersion:
         typeof PDFJSDev !== "undefined" && !PDFJSDev.test("TESTING")
@@ -565,6 +566,7 @@ class PDFDocumentProxy {
   constructor(pdfInfo, transport) {
     this._pdfInfo = pdfInfo;
     this._transport = transport;
+    console.log(this);
   }
 
   /**
@@ -993,6 +995,7 @@ class PDFPageProxy {
     imageLayer = null,
     canvasFactory = null,
     background = null,
+    annotationStorage = null,
   }) {
     if (this._stats) {
       this._stats.time("Overall");
@@ -1033,10 +1036,14 @@ class PDFPageProxy {
       if (this._stats) {
         this._stats.time("Page Request");
       }
+
+      // ce truc appelle le getoperatorlist qui lui meme va chercher de quoi dessiner les annotation
+      // dc il faut passer le annotationStorage a ce truc
       this._pumpOperatorList({
         pageIndex: this._pageIndex,
         intent: renderingIntent,
         renderInteractiveForms: renderInteractiveForms === true,
+        annotationStorage,
       });
     }
 

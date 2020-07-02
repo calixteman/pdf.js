@@ -54,6 +54,7 @@ import {
   UNSUPPORTED_FEATURES,
   version,
 } from "pdfjs-lib";
+import { AnnotationStorage } from "./annotation_storage.js" ;
 import { CursorTool, PDFCursorTools } from "./pdf_cursor_tools.js";
 import { PDFRenderingQueue, RenderingStates } from "./pdf_rendering_queue.js";
 import { PDFSidebar, SidebarView } from "./pdf_sidebar.js";
@@ -187,6 +188,7 @@ const PDFViewerApplication = {
   url: "",
   baseUrl: "",
   externalServices: DefaultExternalServices,
+  annotationStorage: new AnnotationStorage(),
   _boundEvents: {},
   contentDispositionFilename: null,
   _hasInteracted: false,
@@ -398,6 +400,7 @@ const PDFViewerApplication = {
       enablePrintAutoRotate: AppOptions.get("enablePrintAutoRotate"),
       useOnlyCssZoom: AppOptions.get("useOnlyCssZoom"),
       maxCanvasPixels: AppOptions.get("maxCanvasPixels"),
+      annotationStorage: this.annotationStorage,
     });
     pdfRenderingQueue.setViewer(this.pdfViewer);
     pdfLinkService.setViewer(this.pdfViewer);
@@ -1628,7 +1631,8 @@ const PDFViewerApplication = {
       this.pdfDocument,
       pagesOverview,
       printContainer,
-      this.l10n
+      this.l10n,
+      this.annotationStorage,
     );
     this.printService = printService;
     this.forceRendering();

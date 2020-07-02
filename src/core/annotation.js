@@ -509,11 +509,10 @@ class Annotation {
     });
   }
 
-  getOperatorList(evaluator, task, renderForms) {
+  getOperatorList(evaluator, task, renderForms, annotationStorage) {
     if (!this.appearance) {
       return Promise.resolve(new OperatorList());
     }
-
     const data = this.data;
     const appearanceDict = this.appearance.dict;
     const resourcesPromise = this.loadResources([
@@ -877,13 +876,13 @@ class WidgetAnnotation extends Annotation {
     return !!(this.data.fieldFlags & flag);
   }
 
-  getOperatorList(evaluator, task, renderForms) {
+  getOperatorList(evaluator, task, renderForms, annotationStorage) {
     // Do not render form elements on the canvas when interactive forms are
     // enabled. The display layer is responsible for rendering them instead.
     if (renderForms) {
       return Promise.resolve(new OperatorList());
     }
-    return super.getOperatorList(evaluator, task, renderForms);
+    return super.getOperatorList(evaluator, task, renderForms, annotationStorage);
   }
 }
 
@@ -920,9 +919,30 @@ class TextWidgetAnnotation extends WidgetAnnotation {
       this.data.maxLen !== null;
   }
 
-  getOperatorList(evaluator, task, renderForms) {
+  getOperatorList(evaluator, task, renderForms, annotationStorage) {
+    if (annotationStorage) {
+      const value = annotationStorage[this.data.id] || "";
+      if (value === "") {
+        return super.getOperatorList(evaluator, task, renderForms, annotationStorage);        
+      }
+      console.log(value);
+      console.log(this.data);
+      const opList = new OperatorList();
+      const data = this.data;
+      const x = data.rect[0];
+      const y = data.rect[1];
+
+      opList.addOp(OPS.setFillRGBColor, [0, 255, 0]);
+      opList.addOp(OPS.beginText, []);
+      opList.addOp(OPS.setTextRenderingMode, [TextRenderingMode.FILL]);
+      opList.addOp(OPS.moveText, [x, y]);
+      opList.addOp(OPS.showText, [value]);
+      opList.addOp(OPS.endText, []);
+      return Promise.resolve(opList);
+    }
+    
     if (renderForms || this.appearance) {
-      return super.getOperatorList(evaluator, task, renderForms);
+      return super.getOperatorList(evaluator, task, renderForms, annotationStorage);
     }
 
     const operatorList = new OperatorList();
@@ -950,7 +970,7 @@ class TextWidgetAnnotation extends WidgetAnnotation {
 class ButtonWidgetAnnotation extends WidgetAnnotation {
   constructor(params) {
     super(params);
-
+    //console.log(params.pdfManager.getAnnotationStorage().getValue(this.data.id));
     this.data.checkBox =
       !this.hasFieldFlag(AnnotationFieldFlag.RADIO) &&
       !this.hasFieldFlag(AnnotationFieldFlag.PUSHBUTTON);
@@ -970,6 +990,29 @@ class ButtonWidgetAnnotation extends WidgetAnnotation {
     }
   }
 
+  getOperatorList(evaluator, task, renderForms, annotationStorage) {
+    if (annotationStorage) {
+      const value = annotationStorage[this.data.id] || false;
+      if (value) {
+        const opList = new OperatorList();
+        const data = this.data;
+        const x = data.rect[0];
+        const y = data.rect[1];
+        const width = data.rect[2] - x;
+        const height = data.rect[3] - y;
+        
+        opList.addOp(OPS.setFillRGBColor, [255, 0, 0]);
+        evaluator.buildPath(opList, OPS.rectangle, [x, y, width, height], false);
+        opList.addOp(OPS.fill, []);
+        return Promise.resolve(opList);
+      } else {
+        return super.getOperatorList(evaluator, task, renderForms, annotationStorage);
+      }
+    } else {
+      return super.getOperatorList(evaluator, task, renderForms, annotationStorage);
+    }
+  }
+    
   _processCheckBox(params) {
     if (isName(this.data.fieldValue)) {
       this.data.fieldValue = this.data.fieldValue.name;

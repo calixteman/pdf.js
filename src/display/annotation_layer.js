@@ -140,6 +140,7 @@ class AnnotationElement {
     this.imageResourcesPath = parameters.imageResourcesPath;
     this.renderInteractiveForms = parameters.renderInteractiveForms;
     this.svgFactory = parameters.svgFactory;
+    this.storage = parameters.storage;
 
     if (isRenderable) {
       this.container = this._createContainer(ignoreBorder);
@@ -438,6 +439,8 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
    */
   render() {
     const TEXT_ALIGNMENT = ["left", "center", "right"];
+    const storage = this.storage;
+    const id = this.data.id;
 
     this.container.className = "textWidgetAnnotation";
 
@@ -446,14 +449,23 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       // NOTE: We cannot set the values using `element.value` below, since it
       //       prevents the AnnotationLayer rasterizer in `test/driver.js`
       //       from parsing the elements correctly for the reference tests.
+      const textContent = storage.getOrCreate(id, this.data.fieldValue);
+      let fieldName;
+
       if (this.data.multiLine) {
         element = document.createElement("textarea");
-        element.textContent = this.data.fieldValue;
+        element.textContent = textContent;
+        fieldName = "textContent";
       } else {
         element = document.createElement("input");
         element.type = "text";
-        element.setAttribute("value", this.data.fieldValue);
+        element.setAttribute("value", textContent);
+        fieldName = "value";
       }
+      
+      element.addEventListener("change", function (e) {
+        storage.setValue(id, e.target[fieldName]);
+      });
 
       element.disabled = this.data.readOnly;
       element.name = this.data.fieldName;
@@ -542,14 +554,22 @@ class CheckboxWidgetAnnotationElement extends WidgetAnnotationElement {
    */
   render() {
     this.container.className = "buttonWidgetAnnotation checkBox";
-
+    const storage = this.storage;
+    const id = this.data.id;
+    
+    let value = storage.getOrCreate(id, this.data.fieldValue && this.data.fieldValue !== "Off"); 
+    
     const element = document.createElement("input");
     element.disabled = this.data.readOnly;
     element.type = "checkbox";
     element.name = this.data.fieldName;
-    if (this.data.fieldValue && this.data.fieldValue !== "Off") {
-      element.setAttribute("checked", true);
+    if (value) { 
+      element.setAttribute("checked", value);
     }
+
+    element.addEventListener("change", function (e) {
+      storage.setValue(id, e.target.checked);
+    });
 
     this.container.appendChild(element);
     return this.container;
@@ -1450,6 +1470,7 @@ class AnnotationLayer {
         imageResourcesPath: parameters.imageResourcesPath || "",
         renderInteractiveForms: parameters.renderInteractiveForms || false,
         svgFactory: new DOMSVGFactory(),
+        storage: parameters.storage,
       });
       if (element.isRenderable) {
         parameters.div.appendChild(element.render());

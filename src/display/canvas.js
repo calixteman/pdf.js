@@ -1575,6 +1575,9 @@ var CanvasGraphics = (function CanvasGraphicsClosure() {
     },
 
     showText: function CanvasGraphics_showText(glyphs) {
+      console.log(glyphs);
+      if (glyphs === "calixte") {
+      }
       var current = this.current;
       var font = current.font;
       if (font.isType3Font) {

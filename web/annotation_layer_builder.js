@@ -38,6 +38,7 @@ class AnnotationLayerBuilder {
     pdfPage,
     linkService,
     downloadManager,
+    storage,
     imageResourcesPath = "",
     renderInteractiveForms = false,
     l10n = NullL10n,
@@ -49,6 +50,10 @@ class AnnotationLayerBuilder {
     this.imageResourcesPath = imageResourcesPath;
     this.renderInteractiveForms = renderInteractiveForms;
     this.l10n = l10n;
+    this.storage = storage;
+    if (storage == undefined) {
+      console.trace();
+    }
 
     this.div = null;
     this._cancelled = false;
@@ -73,6 +78,7 @@ class AnnotationLayerBuilder {
         renderInteractiveForms: this.renderInteractiveForms,
         linkService: this.linkService,
         downloadManager: this.downloadManager,
+        storage: this.storage,
       };
 
       if (this.div) {
@@ -124,6 +130,7 @@ class DefaultAnnotationLayerFactory {
   createAnnotationLayerBuilder(
     pageDiv,
     pdfPage,
+    storage,
     imageResourcesPath = "",
     renderInteractiveForms = false,
     l10n = NullL10n
@@ -135,6 +142,7 @@ class DefaultAnnotationLayerFactory {
       renderInteractiveForms,
       linkService: new SimpleLinkService(),
       l10n,
+      storage,
     });
   }
 }
