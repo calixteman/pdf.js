@@ -720,6 +720,7 @@ function buildGeneric(defines, dir) {
         base: "external/bcmaps",
       })
       .pipe(gulp.dest(dir + "web/cmaps")),
+    preprocessHTML("web/sandbox.html", defines).pipe(gulp.dest(dir + "web")),
     preprocessHTML("web/viewer.html", defines).pipe(gulp.dest(dir + "web")),
     preprocessCSS("web/viewer.css", "generic", defines, true)
       .pipe(
@@ -868,6 +869,7 @@ function buildMinified(defines, dir) {
       })
       .pipe(gulp.dest(dir + "web/cmaps")),
 
+    preprocessHTML("web/sandbox.html", defines).pipe(gulp.dest(dir + "web")),
     preprocessHTML("web/viewer.html", defines).pipe(gulp.dest(dir + "web")),
     preprocessCSS("web/viewer.css", "minified", defines, true)
       .pipe(

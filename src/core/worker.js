@@ -515,6 +515,19 @@ class WorkerMessageHandler {
       });
     });
 
+    handler.on("GetAnnotationObjects", function ({ numPages }) {
+      const promises = [];
+      for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
+        promises.push(
+          pdfManager.getPage(pageIndex).then(function (page) {
+            const task = new WorkerTask(`GetObjects: page ${pageIndex}`);
+            return page.getAnnotationObjects(handler, task);
+          })
+        );
+      }
+      return Promise.all(promises);
+    });
+
     handler.on("SaveDocument", function ({
       numPages,
       annotationStorage,

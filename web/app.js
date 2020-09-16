@@ -955,6 +955,31 @@ const PDFViewerApplication = {
       });
   },
 
+  setSandboxMessageHandler() {
+    const sandboxIFrame = document.getElementById("js-sandbox");
+    window.addEventListener("message", function (e) {
+      if (e.origin === "null" && e.source === sandboxIFrame.contentWindow) {
+        const { id, data } = e.data;
+        const element = document.getElementById(id);
+        if (element) {
+          const event = new CustomEvent("updateFromSandbox", { detail: data });
+          element.dispatchEvent(event);
+        }
+      }
+    });
+  },
+
+  sendAnnotationObjectsInSandbox() {
+    this.pdfDocument.getAnnotationObjects().then(data => {
+      const sandboxIFrame = document.getElementById("js-sandbox");
+      sandboxIFrame.contentWindow.postMessage(
+        { name: "Create", value: data },
+        "*"
+      );
+      this.setSandboxMessageHandler();
+    });
+  },
+
   /**
    * For PDF documents that contain e.g. forms and javaScript, we should only
    * trigger the fallback bar once the user has interacted with the page.
@@ -1181,6 +1206,9 @@ const PDFViewerApplication = {
     annotationStorage.onResetModified = function () {
       window.removeEventListener("beforeunload", beforeUnload);
     };
+
+    // Get all the annotations and send them in the sandbox
+    this.sendAnnotationObjectsInSandbox();
 
     const pdfViewer = this.pdfViewer;
     pdfViewer.setDocument(pdfDocument);

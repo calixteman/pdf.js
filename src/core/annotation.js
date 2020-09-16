@@ -24,10 +24,12 @@ import {
   escapeString,
   getModificationDate,
   isString,
+  ListenerType,
   OPS,
   stringToPDFString,
   Util,
   warn,
+  WidgetType,
 } from "../shared/util.js";
 import { Catalog, FileSpec, ObjectLoader } from "./obj.js";
 import { Dict, isDict, isName, isRef, isStream, Name } from "./primitives.js";
@@ -563,6 +565,10 @@ class Annotation {
   async save(evaluator, task, annotationStorage) {
     return null;
   }
+
+  async getAnnotationObject(evaluator, task) {
+    return null;
+  }
 }
 
 /**
@@ -904,6 +910,38 @@ class WidgetAnnotation extends Annotation {
       data.fieldValue = null;
       this.setFlags(AnnotationFlag.HIDDEN);
     }
+  }
+
+  _collectActions(dict) {
+    const actions = Object.create([]);
+    if (dict.has("AA")) {
+      const map = {
+        E: ListenerType["Mouse Enter"],
+        X: ListenerType["Mouse Exit"],
+        D: ListenerType["Mouse Down"],
+        U: ListenerType["Mouse Up"],
+        Fo: ListenerType.Focus,
+        Bl: ListenerType.Blur,
+        K: ListenerType.Keystroke,
+        F: ListenerType.Format,
+        V: ListenerType.Validate,
+        C: ListenerType.Calculate,
+      };
+      const additionalAction = dict.get("AA");
+      for (const key of dict.getKeys()) {
+        const actionDict = additionalAction.get(key);
+        if (
+          map.hasOwnProperty(key) &&
+          actionDict &&
+          actionDict.has("JS") &&
+          actionDict.has("S") &&
+          actionDict.get("S") === Name.get("JavaScript")
+        ) {
+          actions[map[key]] = stringToPDFString(actionDict.get("JS"));
+        }
+      }
+    }
+    return actions;
   }
 
   /**
@@ -1429,6 +1467,17 @@ class TextWidgetAnnotation extends WidgetAnnotation {
     }
 
     return chunks;
+  }
+
+  async getAnnotationObject(evaluator, task) {
+    const dict = evaluator.xref.fetchIfRef(this.ref);
+    return {
+      type: AnnotationType.WIDGET,
+      subtype: WidgetType.TEXT,
+      id: this.data.id,
+      contents: this.data.fieldValue,
+      actions: this._collectActions(dict),
+    };
   }
 }
 

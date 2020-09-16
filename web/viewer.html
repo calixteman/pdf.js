@@ -62,7 +62,7 @@ See https://github.com/adobe-type-tools/cmap-resources
 <!--#if (GENERIC && !MINIFIED) -->
 <!--#include viewer-snippet.html-->
 <!--#endif-->
-
+    
 <!--#if !MINIFIED -->
 <!--<script src="viewer.js"></script>-->
 <!--#else-->
@@ -72,6 +72,7 @@ See https://github.com/adobe-type-tools/cmap-resources
   </head>
 
   <body tabindex="1">
+    <iframe id="js-sandbox" sandbox="allow-scripts" style="display: none;" src="sandbox.html"></iframe>
     <div id="outerContainer">
 
       <div id="sidebarContainer">

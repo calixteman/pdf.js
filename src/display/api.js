@@ -877,6 +877,10 @@ class PDFDocumentProxy {
   saveDocument(annotationStorage) {
     return this._transport.saveDocument(annotationStorage);
   }
+
+  getAnnotationObjects() {
+    return this._transport.getAnnotationObjects();
+  }
 }
 
 /**
@@ -2548,6 +2552,12 @@ class WorkerTransport {
           annotationStorage.resetModified();
         }
       });
+  }
+
+  getAnnotationObjects() {
+    return this.messageHandler.sendWithPromise("GetAnnotationObjects", {
+      numPages: this._numPages,
+    });
   }
 
   getDestinations() {

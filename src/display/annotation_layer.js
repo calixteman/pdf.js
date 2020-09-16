@@ -462,12 +462,32 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
         element.setAttribute("value", textContent);
       }
 
+      element.setAttribute("id", id);
+
       element.addEventListener("input", function (event) {
         storage.setValue(id, event.target.value);
       });
 
+      const sandboxIFrame = document.getElementById("js-sandbox");
       element.addEventListener("blur", function (event) {
         event.target.setSelectionRange(0, 0);
+        sandboxIFrame.contentWindow.postMessage(
+          {
+            name: "Event",
+            id,
+            field: "value",
+            event: {
+              type: "Field",
+              name: "Format",
+              value: event.target.value,
+            },
+          },
+          "*"
+        );
+      });
+
+      element.addEventListener("updateFromSandbox", function (event) {
+        event.target.value = event.detail.value;
       });
 
       element.disabled = this.data.readOnly;

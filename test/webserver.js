@@ -350,6 +350,9 @@ function crossOriginHandler(req, res) {
   if (req.url === "/test/pdfs/basicapi.pdf?cors=withoutCredentials") {
     res.setHeader("Access-Control-Allow-Origin", req.headers.origin);
   }
+  if (req.url.includes(".js")) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
 }
 
 exports.WebServer = WebServer;

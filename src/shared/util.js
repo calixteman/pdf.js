@@ -79,6 +79,13 @@ const AnnotationType = {
   REDACT: 26,
 };
 
+const WidgetType = {
+  TEXT: 1,
+  CHECKBOX: 2,
+  RADIO: 3,
+  CHOICE: 4,
+};
+
 const AnnotationStateModelType = {
   MARKED: "Marked",
   REVIEW: "Review",
@@ -308,6 +315,27 @@ const UNSUPPORTED_FEATURES = {
 const PasswordResponses = {
   NEED_PASSWORD: 1,
   INCORRECT_PASSWORD: 2,
+};
+
+const ListenerType = {
+  Keystroke: 0,
+  Validate: 1,
+  Focus: 2,
+  Blur: 3,
+  Format: 4,
+  Calculate: 5,
+  "Mouse Up": 6,
+  "Mouse Down": 7,
+  "Mouse Enter": 8,
+  "Mouse Exit": 9,
+  WillPrint: 10,
+  DidPrint: 11,
+  WillSave: 12,
+  DidSave: 13,
+  Init: 14,
+  Exec: 15,
+  Open: 16,
+  Close: 17,
 };
 
 let verbosity = VerbosityLevel.WARNINGS;
@@ -957,6 +985,22 @@ function encodeToXmlString(str) {
   return buffer.join("");
 }
 
+function isPublicProperty(obj, prop) {
+  return (
+    typeof prop === "string" &&
+    !prop.startsWith("_") &&
+    obj.hasOwnProperty(prop)
+  );
+}
+
+function createAction(code) {
+  if (code) {
+    return new Function("context", "with (context) {" + code + "}");
+  }
+
+  return null;
+}
+
 export {
   BaseException,
   FONT_IDENTITY_MATRIX,
@@ -977,6 +1021,7 @@ export {
   CMapCompressionType,
   AbortException,
   InvalidPDFException,
+  ListenerType,
   MissingPDFException,
   PasswordException,
   PasswordResponses,
@@ -986,11 +1031,13 @@ export {
   UnexpectedResponseException,
   UnknownErrorException,
   Util,
+  WidgetType,
   FormatError,
   arrayByteLength,
   arraysToBytes,
   assert,
   bytesToString,
+  createAction,
   createPromiseCapability,
   createObjectURL,
   escapeString,
@@ -1002,6 +1049,7 @@ export {
   isArrayEqual,
   isBool,
   isNum,
+  isPublicProperty,
   isString,
   isSameOrigin,
   createValidAbsoluteUrl,
