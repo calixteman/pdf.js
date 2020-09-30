@@ -1863,6 +1863,91 @@ describe("annotation", function () {
           done();
         }, done.fail);
     });
+
+    it("should get annotation object for use in pdf script", function (done) {
+      const textWidgetRef = Ref.get(123, 0);
+      const xDictRef = Ref.get(141, 0);
+      const dDictRef = Ref.get(262, 0);
+      const next0Ref = Ref.get(314, 0);
+      const next1Ref = Ref.get(271, 0);
+      const next2Ref = Ref.get(577, 0);
+      const next00Ref = Ref.get(413, 0);
+      const xDict = new Dict();
+      const dDict = new Dict();
+      const next0Dict = new Dict();
+      const next1Dict = new Dict();
+      const next2Dict = new Dict();
+      const next00Dict = new Dict();
+
+      const xref = new XRefMock([
+        { ref: textWidgetRef, data: textWidgetDict },
+        { ref: xDictRef, data: xDict },
+        { ref: dDictRef, data: dDict },
+        { ref: next0Ref, data: next0Dict },
+        { ref: next00Ref, data: next00Dict },
+        { ref: next1Ref, data: next1Dict },
+        { ref: next2Ref, data: next2Dict },
+      ]);
+
+      const JS = Name.get("JavaScript");
+      const additionalActionDict = new Dict();
+      const eDict = new Dict();
+      eDict.set("JS", "hello()");
+      eDict.set("S", JS);
+      additionalActionDict.set("E", eDict);
+
+      xDict.set("JS", "world()");
+      xDict.set("S", JS);
+      xDict.set("Next", [next0Ref, next1Ref, next2Ref, xDictRef]);
+
+      next0Dict.set("JS", "olleh()");
+      next0Dict.set("S", JS);
+      next0Dict.set("Next", next00Ref);
+
+      next00Dict.set("JS", "foo()");
+      next00Dict.set("S", JS);
+      next00Dict.set("Next", next0Ref);
+
+      next1Dict.set("JS", "dlrow()");
+      next1Dict.set("S", JS);
+      next1Dict.set("Next", xDictRef);
+
+      next2Dict.set("JS", "oof()");
+      next2Dict.set("S", JS);
+
+      dDict.set("JS", "bar()");
+      dDict.set("S", JS);
+      dDict.set("Next", dDictRef);
+      additionalActionDict.set("D", dDictRef);
+
+      additionalActionDict.set("X", xDictRef);
+      textWidgetDict.set("AA", additionalActionDict);
+
+      partialEvaluator.xref = xref;
+
+      AnnotationFactory.create(
+        xref,
+        textWidgetRef,
+        pdfManagerMock,
+        idFactoryMock
+      )
+        .then(annotation => {
+          return annotation.getAnnotationObject();
+        })
+        .then(object => {
+          const actions = object.actions;
+          expect(actions.MouseEnter).toEqual(["hello()"]);
+          expect(actions.MouseExit).toEqual([
+            "world()",
+            "olleh()",
+            "foo()",
+            "dlrow()",
+            "oof()",
+          ]);
+          expect(actions.MouseDown).toEqual(["bar()"]);
+          done();
+        }, done.fail);
+    });
   });
 
   describe("ButtonWidgetAnnotation", function () {

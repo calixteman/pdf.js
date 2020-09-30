@@ -226,6 +226,25 @@ class Page {
     return stream;
   }
 
+  getAnnotationObjects() {
+    // Fetch the page's annotations and get annotation data
+    // to be used in JS sandbox.
+    return this._parsedAnnotations.then(function (annotations) {
+      const results = [];
+      for (const annotation of annotations) {
+        if (!isAnnotationRenderable(annotation, "print")) {
+          continue;
+        }
+        const object = annotation.getAnnotationObject();
+        if (object) {
+          results.push(object);
+        }
+      }
+
+      return results;
+    });
+  }
+
   save(handler, task, annotationStorage) {
     const partialEvaluator = new PartialEvaluator({
       xref: this.xref,
@@ -708,7 +727,7 @@ class PDFDocument {
   }
 
   get formInfo() {
-    const formInfo = { hasAcroForm: false, hasXfa: false };
+    const formInfo = { hasAcroForm: false, hasXfa: false, fields: null };
     const acroForm = this.catalog.acroForm;
     if (!acroForm) {
       return shadow(this, "formInfo", formInfo);
@@ -736,6 +755,9 @@ class PDFDocument {
       const hasOnlyDocumentSignatures =
         !!(sigFlags & 0x1) && this._hasOnlyDocumentSignatures(fields);
       formInfo.hasAcroForm = hasFields && !hasOnlyDocumentSignatures;
+      if (formInfo.hasAcroForm) {
+        formInfo.fields = fields;
+      }
     } catch (ex) {
       if (ex instanceof MissingDataException) {
         throw ex;
@@ -934,6 +956,65 @@ class PDFDocument {
     return this.catalog
       ? this.catalog.cleanup(manuallyTriggered)
       : clearPrimitiveCaches();
+  }
+
+  _collectFieldObjects(name, fieldRef, promises) {
+    const field = this.xref.fetchIfRef(fieldRef);
+    if (field.has("T")) {
+      const partName = stringToPDFString(field.get("T"));
+      if (name === "") {
+        name = partName;
+      } else {
+        name = `${name}.${partName}`;
+      }
+    }
+
+    if (!(name in promises)) {
+      promises[name] = [];
+    }
+    promises[name].push(
+      AnnotationFactory.create(
+        this.xref,
+        fieldRef,
+        this.pdfManager,
+        this._localIdFactory
+      )
+        .then(annotation => annotation.getAnnotationObject())
+        .catch(function (reason) {
+          warn(`_collectFieldObjects: "${reason}".`);
+          return null;
+        })
+    );
+
+    if (field.has("Kids")) {
+      const kids = field.get("Kids");
+      for (const kid of kids) {
+        this._collectFieldObjects(name, kid, promises);
+      }
+    }
+  }
+
+  async getFieldObjects() {
+    const formInfo = this.formInfo;
+    const allFields = Object.create(null);
+    if (!formInfo.hasAcroForm) {
+      return allFields;
+    }
+
+    const fieldPromises = Object.create(null);
+    for (const fieldRef of formInfo.fields) {
+      this._collectFieldObjects("", fieldRef, fieldPromises);
+    }
+
+    for (const [qualName, promises] of Object.entries(fieldPromises)) {
+      const fields = (await Promise.all(promises)).filter(
+        field => field !== null
+      );
+      if (fields.length > 0) {
+        allFields[qualName] = fields;
+      }
+    }
+    return allFields;
   }
 }
 

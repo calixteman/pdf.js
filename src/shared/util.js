@@ -309,6 +309,28 @@ const PasswordResponses = {
   INCORRECT_PASSWORD: 2,
 };
 
+const AnnotationActionEventType = {
+  E: "MouseEnter",
+  X: "MouseExit",
+  D: "MouseDown",
+  U: "MouseUp",
+  Fo: "Focus",
+  Bl: "Blur",
+  PO: "PageOpen",
+  PC: "PageClosed",
+  PV: "PageVisible",
+  PI: "PageInvisible",
+  K: "Keystroke",
+  F: "Format",
+  V: "Validate",
+  C: "Calculate",
+  WC: "WillClose",
+  WS: "WillSave",
+  DS: "DidSave",
+  WP: "WillPrint",
+  DP: "DidPrint",
+};
+
 let verbosity = VerbosityLevel.WARNINGS;
 
 function setVerbosityLevel(level) {
@@ -971,6 +993,7 @@ export {
   OPS,
   VerbosityLevel,
   UNSUPPORTED_FEATURES,
+  AnnotationActionEventType,
   AnnotationBorderStyleType,
   AnnotationFieldFlag,
   AnnotationFlag,

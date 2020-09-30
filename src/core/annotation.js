@@ -14,12 +14,14 @@
  */
 
 import {
+  AnnotationActionEventType,
   AnnotationBorderStyleType,
   AnnotationFieldFlag,
   AnnotationFlag,
   AnnotationReplyType,
   AnnotationType,
   assert,
+  bytesToString,
   escapeString,
   getModificationDate,
   isString,
@@ -30,7 +32,15 @@ import {
   warn,
 } from "../shared/util.js";
 import { Catalog, FileSpec, ObjectLoader } from "./obj.js";
-import { Dict, isDict, isName, isRef, isStream, Name } from "./primitives.js";
+import {
+  Dict,
+  isDict,
+  isName,
+  isRef,
+  isStream,
+  Name,
+  RefSet,
+} from "./primitives.js";
 import { ColorSpace } from "./colorspace.js";
 import { getInheritableProperty } from "./core_utils.js";
 import { OperatorList } from "./operator_list.js";
@@ -569,6 +579,10 @@ class Annotation {
     return null;
   }
 
+  getAnnotationObject() {
+    return null;
+  }
+
   /**
    * Reset the annotation.
    *
@@ -903,6 +917,7 @@ class WidgetAnnotation extends Annotation {
 
     data.annotationType = AnnotationType.WIDGET;
     data.fieldName = this._constructFieldName(dict);
+    data.actions = this._collectActions(params.xref, dict);
 
     const fieldValue = getInheritableProperty({
       dict,
@@ -937,6 +952,7 @@ class WidgetAnnotation extends Annotation {
     }
 
     data.readOnly = this.hasFieldFlag(AnnotationFieldFlag.READONLY);
+    data.hidden = this.hasFieldFlag(AnnotationFieldFlag.HIDDEN);
 
     // Hide signatures because we cannot validate them, and unset the fieldValue
     // since it's (most likely) a `Dict` which is non-serializable and will thus
@@ -944,6 +960,7 @@ class WidgetAnnotation extends Annotation {
     if (data.fieldType === "Sig") {
       data.fieldValue = null;
       this.setFlags(AnnotationFlag.HIDDEN);
+      data.hidden = true;
     }
   }
 
@@ -1366,6 +1383,76 @@ class WidgetAnnotation extends Annotation {
     }
     return localResources || Dict.empty;
   }
+
+  _collectJS(entry, xref, list, parents) {
+    if (!entry) {
+      return;
+    }
+
+    let parent = null;
+    if (isRef(entry)) {
+      if (parents.has(entry)) {
+        // If we've already found entry then we've a cycle.
+        return;
+      }
+      parent = entry;
+      parents.put(parent);
+      entry = xref.fetch(entry);
+    }
+    if (Array.isArray(entry)) {
+      for (const element of entry) {
+        this._collectJS(element, xref, list, parents);
+      }
+    } else if (entry instanceof Dict) {
+      if (isName(entry.get("S"), "JavaScript") && entry.has("JS")) {
+        const js = entry.get("JS");
+        let code;
+        if (isStream(js)) {
+          code = bytesToString(js.getBytes());
+        } else {
+          code = stringToPDFString(js);
+        }
+        if (code) {
+          list.push(code);
+        }
+      }
+      this._collectJS(entry.getRaw("Next"), xref, list, parents);
+    }
+
+    if (parent) {
+      parents.remove(parent);
+    }
+  }
+
+  _collectActions(xref, dict) {
+    const actions = Object.create(null);
+    if (dict.has("AA")) {
+      const additionalAction = dict.get("AA");
+      for (const key of additionalAction.getKeys()) {
+        if (key in AnnotationActionEventType) {
+          const actionDict = additionalAction.getRaw(key);
+          const parents = new RefSet();
+          const list = [];
+          this._collectJS(actionDict, xref, list, parents);
+          if (list.length > 0) {
+            actions[AnnotationActionEventType[key]] = list;
+          }
+        }
+      }
+    }
+    return actions;
+  }
+
+  getAnnotationObject() {
+    if (this.data.fieldType === "Sig") {
+      return {
+        id: this.data.id,
+        value: null,
+        type: "signature",
+      };
+    }
+    return null;
+  }
 }
 
 class TextWidgetAnnotation extends WidgetAnnotation {
@@ -1515,6 +1602,23 @@ class TextWidgetAnnotation extends WidgetAnnotation {
     }
 
     return chunks;
+  }
+
+  getAnnotationObject() {
+    return {
+      id: this.data.id,
+      value: this.data.fieldValue,
+      multiline: this.data.multiline,
+      password: this.hasFieldFlag(AnnotationFieldFlag.PASSWORD),
+      charLimit: this.data.maxLen,
+      comb: this.data.comb,
+      editable: !this.data.readOnly,
+      hidden: this.data.hidden,
+      name: this.data.fieldName,
+      rect: this.data.rect,
+      actions: this.data.actions,
+      type: "text",
+    };
   }
 }
 
@@ -1793,6 +1897,28 @@ class ButtonWidgetAnnotation extends WidgetAnnotation {
       docBaseUrl: params.pdfManager.docBaseUrl,
     });
   }
+
+  getAnnotationObject() {
+    let type = "button";
+    let value = null;
+    if (this.data.checkBox) {
+      type = "checkbox";
+      value = this.data.fieldValue && this.data.fieldValue !== "Off";
+    } else if (this.data.radioButton) {
+      type = "radiobutton";
+      value = this.data.fieldValue === this.data.buttonValue;
+    }
+    return {
+      id: this.data.id,
+      value,
+      editable: !this.data.readOnly,
+      name: this.data.fieldName,
+      rect: this.data.rect,
+      hidden: this.data.hidden,
+      actions: this.data.actions,
+      type,
+    };
+  }
 }
 
 class ChoiceWidgetAnnotation extends WidgetAnnotation {
@@ -1842,6 +1968,23 @@ class ChoiceWidgetAnnotation extends WidgetAnnotation {
     this.data.combo = this.hasFieldFlag(AnnotationFieldFlag.COMBO);
     this.data.multiSelect = this.hasFieldFlag(AnnotationFieldFlag.MULTISELECT);
     this._hasText = true;
+  }
+
+  getAnnotationObject() {
+    const type = this.data.combo ? "combobox" : "listbox";
+    const value =
+      this.data.fieldValue.length > 0 ? this.data.fieldValue[0] : null;
+    return {
+      id: this.data.id,
+      value,
+      editable: !this.data.readOnly,
+      name: this.data.fieldName,
+      rect: this.data.rect,
+      multipleSelection: this.data.multiSelect,
+      hidden: this.data.hidden,
+      actions: this.data.actions,
+      type,
+    };
   }
 }
 

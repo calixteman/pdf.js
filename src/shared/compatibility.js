@@ -86,6 +86,15 @@ if (
     require("core-js/es/array/includes.js");
   })();
 
+  // Provides support for Array.prototype.flat in legacy browsers.
+  // Support: IE, Chrome<69
+  (function checkArrayFlat() {
+    if (Array.prototype.flat) {
+      return;
+    }
+    require("core-js/es/array/flat.js");
+  })();
+
   // Provides support for Array.from in legacy browsers.
   // Support: IE
   (function checkArrayFrom() {
