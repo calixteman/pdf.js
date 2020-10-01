@@ -50,6 +50,7 @@ import {
   OPS,
   PDFWorker,
   PermissionFlag,
+  Scripting,
   shadow,
   UnexpectedResponseException,
   UNSUPPORTED_FEATURES,
@@ -178,6 +179,10 @@ class DefaultExternalServices {
 
   static get isInAutomation() {
     return shadow(this, "isInAutomation", false);
+  }
+
+  static get scripting() {
+    throw new Error("Not implemented: scripting");
   }
 }
 
@@ -1333,6 +1338,56 @@ const PDFViewerApplication = {
 
     this._initializePageLabels(pdfDocument);
     this._initializeMetadata(pdfDocument);
+    this._initializeJavaScript(pdfDocument);
+  },
+
+  /**
+   * @private
+   */
+  async _initializeJavaScript(pdfDocument) {
+    if (!AppOptions.get("enableScripting")) {
+      return;
+    }
+    const objects = await pdfDocument.getFieldObjects();
+    const scripting = this.externalServices.scripting;
+
+    window.addEventListener("updateFromSandbox", function (event) {
+      const id = event.detail.id;
+      switch (id) {
+        case "println":
+          console.log(event.detail.value);
+          return;
+        case "clear":
+          console.clear();
+          return;
+        case "alert":
+          alert(event.detail.value);
+          return;
+        case "error":
+          console.error(event.detail.value);
+          return;
+      }
+
+      const element = document.getElementById(id);
+      if (element) {
+        element.dispatchEvent(
+          new CustomEvent("updateFromSandbox", { detail: event.detail })
+        );
+      } else {
+        const value = event.detail.value;
+        if (value !== undefined && value !== null) {
+          // the element hasn't been rendered yet so use annotation storage
+          pdfDocument.annotationStorage.setValue(id, event.detail.value);
+        }
+      }
+    });
+
+    window.addEventListener("dispatchEventInSandbox", function (event) {
+      scripting.dispatchEventInSandbox(event.detail);
+    });
+
+    const code = Scripting.getCode({ document: null, objects });
+    scripting.createSandbox(code);
   },
 
   /**

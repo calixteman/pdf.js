@@ -53,6 +53,7 @@ import { AnnotationLayer } from "./display/annotation_layer.js";
 import { apiCompatibilityParams } from "./display/api_compatibility.js";
 import { GlobalWorkerOptions } from "./display/worker_options.js";
 import { renderTextLayer } from "./display/text_layer.js";
+import { Scripting } from "./scripting_api/scripting.js";
 import { SVGGraphics } from "./display/svg.js";
 
 /* eslint-disable-next-line no-unused-vars */
@@ -164,4 +165,6 @@ export {
   renderTextLayer,
   // From "./display/svg.js":
   SVGGraphics,
+  // From "./scripting_api/scripting.js"
+  Scripting,
 };
