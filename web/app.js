@@ -50,6 +50,7 @@ import {
   OPS,
   PDFWorker,
   PermissionFlag,
+  QuickJSSandbox,
   Scripting,
   shadow,
   UnexpectedResponseException,
@@ -182,7 +183,7 @@ class DefaultExternalServices {
   }
 
   static get scripting() {
-    throw new Error("Not implemented: scripting");
+    return shadow(this, "scripting", QuickJSSandbox());
   }
 }
 

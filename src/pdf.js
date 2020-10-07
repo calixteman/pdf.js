@@ -54,6 +54,7 @@ import { apiCompatibilityParams } from "./display/api_compatibility.js";
 import { GlobalWorkerOptions } from "./display/worker_options.js";
 import { renderTextLayer } from "./display/text_layer.js";
 import { Scripting } from "./scripting_api/scripting.js";
+import { QuickJSSandbox } from "./scripting_api/sandbox.js";
 import { SVGGraphics } from "./display/svg.js";
 
 /* eslint-disable-next-line no-unused-vars */
@@ -161,6 +162,8 @@ export {
   apiCompatibilityParams,
   // From "./display/worker_options.js":
   GlobalWorkerOptions,
+  // From "./scripting_api/sandbox.js"
+  QuickJSSandbox,
   // From "./display/text_layer.js":
   renderTextLayer,
   // From "./display/svg.js":

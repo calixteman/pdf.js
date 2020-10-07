@@ -34,12 +34,11 @@ function generateRandomString(actions) {
       }
     }
 
-    const nameString =
-      btoa(
-        Array.from(name)
-          .map(x => String.fromCharCode(x))
-          .join("")
-      );
+    const nameString = btoa(
+      Array.from(name)
+        .map(x => String.fromCharCode(x))
+        .join("")
+    );
     if (actions.every(action => !action.includes(nameString))) {
       return nameString;
     }
@@ -70,6 +69,8 @@ function generateCode({ document, objects }) {
     util: "new Proxy(new Util({crackURL}), proxyHandler)",
   };
 
+  // console.log(objects);
+  objects = Object.values(objects).flat(2);
   const allActions = objects.map(obj => Object.values(obj.actions)).flat(2);
   const dispatchEventName = generateRandomString(allActions);
 

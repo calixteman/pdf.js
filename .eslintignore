@@ -9,6 +9,7 @@ external/builder/fixtures/
 external/builder/fixtures_esprima/
 src/shared/cffStandardStrings.js
 src/shared/fonts_utils.js
+src/scripting_api/quickjs-eval.js
 test/tmp/
 test/features/
 test/pdfs/
