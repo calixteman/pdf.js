@@ -71,8 +71,8 @@ function generateCode({ document, objects }) {
     util: "new Proxy(new Util({crackURL}), proxyHandler)",
   };
 
-  objects = Object.values(objects).flat(2);
-  const allActions = objects.map(obj => Object.values(obj.actions)).flat(2);
+  const allObjects = Object.values(objects).flat(2);
+  const allActions = allObjects.map(obj => Object.values(obj.actions)).flat(2);
   const dispatchEventName = generateRandomString(allActions);
 
   const buf = Object.getOwnPropertyNames(PublicMethods)
@@ -82,21 +82,22 @@ function generateCode({ document, objects }) {
   buf.push(`const [${Object.keys(outputsMap).join(", ")}] = (function() {`);
   buf.push(`const dispatchEvent = '${dispatchEventName}';`);
   buf.push(`const proxyHandler = ${dumpClass(ProxyHandler)};`);
-  buf.push("let temp;");
+  buf.push("let obj, wrapped;");
 
   imports.map(dumpClass).forEach(dumped => buf.push(dumped));
-  buf.push("const _app = new App({send, _document: new Doc({send})});");
+  buf.push(`const _document = new Doc({send});`);
+  buf.push("const _app = new App({send, _document});");
 
-  for (const obj of objects) {
-    if (false && obj.id === "436R") {
-      obj.actions.Format = [
-        "event.target.value = this.getPrintParams().constants.flagValues.emitPostScriptXObjects",
-      ];
+  for (const [name, objs] of Object.entries(objects)) {
+    const obj = objs[0];
+    if (obj.id === "436R") {
+      obj.actions.Format = ["this.getField('11').value = 'hello world';"];
     }
     buf.push(
-      `temp = new Field({...${JSON.stringify(obj)}` +
-        `, send});_app._objects['${obj.id}'] = ` +
-        "{obj: temp, wrapped: new Proxy(temp, proxyHandler)};"
+      `obj = new Field({...${JSON.stringify(obj)}, send});` +
+        "wrapped = new Proxy(obj, proxyHandler);" +
+        `_document._fields['${name}'] = wrapped;` +
+        `_app._objects['${obj.id}'] = {obj, wrapped};`
     );
   }
 

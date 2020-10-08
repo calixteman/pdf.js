@@ -52,6 +52,7 @@ class Doc extends PDFObject {
     this.zoomType = data.zoomType || "NoVary";
 
     this._printParams = null;
+    this._fields = Object.create(null);
   }
 
   addAnnot() {
@@ -118,8 +119,17 @@ class Doc extends PDFObject {
     /* Not implemented */
   }
 
-  getField() {
-    /* TODO */
+  getField(cName) {
+    if (cName in this._fields) {
+      return this._fields[cName];
+    }
+    for (const [name, field] of Object.entries(this._fields)) {
+      if (name.includes(cName)) {
+        return field;
+      }
+    }
+
+    return undefined;
   }
 
   getIcon() {
