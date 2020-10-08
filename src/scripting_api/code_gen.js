@@ -19,6 +19,7 @@ import { Doc } from "./doc.js";
 import { Field } from "./field.js";
 import { NotSupportedError } from "./error.js";
 import { PDFObject } from "./pdf_object.js";
+import { PrintParams } from "./print_params.js";
 import { ProxyHandler } from "./proxy.js";
 import { PublicMethods } from "./publics.js";
 import { Util } from "./util.js";
@@ -60,6 +61,7 @@ function generateCode({ document, objects }) {
     Console,
     Doc,
     Field,
+    PrintParams,
     Util,
   ];
   const outputsMap = {
@@ -69,7 +71,6 @@ function generateCode({ document, objects }) {
     util: "new Proxy(new Util({crackURL}), proxyHandler)",
   };
 
-  // console.log(objects);
   objects = Object.values(objects).flat(2);
   const allActions = objects.map(obj => Object.values(obj.actions)).flat(2);
   const dispatchEventName = generateRandomString(allActions);
@@ -84,11 +85,14 @@ function generateCode({ document, objects }) {
   buf.push("let temp;");
 
   imports.map(dumpClass).forEach(dumped => buf.push(dumped));
-  buf.push(
-    "const _app = new App({send, _document: new Doc(Object.create(null))});"
-  );
+  buf.push("const _app = new App({send, _document: new Doc({send})});");
 
   for (const obj of objects) {
+    if (false && obj.id === "436R") {
+      obj.actions.Format = [
+        "event.target.value = this.getPrintParams().constants.flagValues.emitPostScriptXObjects",
+      ];
+    }
     buf.push(
       `temp = new Field({...${JSON.stringify(obj)}` +
         `, send});_app._objects['${obj.id}'] = ` +

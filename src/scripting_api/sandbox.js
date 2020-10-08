@@ -8,6 +8,7 @@ class Sandbox {
 
   create(code) {
     this.dispatchEventName = code.dispatchEventName;
+    // this._eval("try { " + code.code + "} catch (error) {debugMe(error.message);}");
     this._eval(code.code);
     this._eval(
       [

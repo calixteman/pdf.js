@@ -1352,7 +1352,7 @@ const PDFViewerApplication = {
     const objects = await pdfDocument.getFieldObjects();
     const scripting = this.externalServices.scripting;
 
-    window.addEventListener("updateFromSandbox", function (event) {
+    window.addEventListener("updateFromSandbox", event => {
       const id = event.detail.id;
       switch (id) {
         case "println":
@@ -1366,6 +1366,11 @@ const PDFViewerApplication = {
           return;
         case "error":
           console.error(event.detail.value);
+          return;
+        case "print":
+          setTimeout(() => {
+            this.triggerPrinting();
+          });
           return;
       }
 

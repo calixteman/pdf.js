@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-import { NotSupportedError } from "./error.js";
 import { PDFObject } from "./pdf_object.js";
+import { PrintParams } from "./print_params.js";
 
 class Doc extends PDFObject {
   constructor(data) {
@@ -50,6 +50,8 @@ class Doc extends PDFObject {
     this.URL = data.URL || "";
     this.zoom = data.zoom || 100;
     this.zoomType = data.zoomType || "NoVary";
+
+    this._printParams = null;
   }
 
   addAnnot() {
@@ -153,7 +155,10 @@ class Doc extends PDFObject {
   }
 
   getPrintParams() {
-    throw new NotSupportedError("doc.getPrintParams");
+    if (!this._printParams) {
+      this._printParams = new PrintParams({ lastPage: this.pageNum });
+    }
+    return this._printParams;
   }
 
   getURL() {
@@ -188,8 +193,38 @@ class Doc extends PDFObject {
     /* TODO */
   }
 
-  print() {
-    /* TODO */
+  print(
+    bUI = true,
+    nStart = 0,
+    nEnd = -1,
+    bSilent = false,
+    bShrinkToFit = false,
+    bPrintAsImage = false,
+    bReverse = false,
+    bAnnotations = true,
+    printParams = null
+  ) {
+    // TODO: for now just use nStart and nEnd
+    // so need to see how to deal with the other params
+    // (if possible)
+    if (printParams) {
+      nStart = printParams.firstPage;
+      nEnd = printParams.lastPage;
+    }
+
+    if (typeof nStart === "number") {
+      nStart = Math.max(0, Math.trunc(nStart));
+    } else {
+      nStart = 0;
+    }
+
+    if (typeof nEnd === "number") {
+      nEnd = Math.max(0, Math.trunc(nEnd));
+    } else {
+      nEnd = -1;
+    }
+
+    this._send({ id: "print", start: nStart, end: nEnd });
   }
 
   removeField() {
