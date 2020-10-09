@@ -62,6 +62,7 @@ function generateCode({ document, objects }) {
     Doc,
     Field,
     PrintParams,
+    PublicMethods,
     Util,
   ];
   const outputsMap = {
@@ -71,27 +72,33 @@ function generateCode({ document, objects }) {
     util: "new Proxy(new Util({crackURL}), proxyHandler)",
   };
 
+  for (const name of Object.getOwnPropertyNames(PublicMethods.prototype)) {
+    if (name.startsWith("AF")) {
+      outputsMap[name] = `_publics.${name}.bind(_publics)`;
+    }
+  }
+
   const allObjects = Object.values(objects).flat(2);
   const allActions = allObjects.map(obj => Object.values(obj.actions)).flat(2);
   const dispatchEventName = generateRandomString(allActions);
 
-  const buf = Object.getOwnPropertyNames(PublicMethods)
-    .filter(name => name.startsWith("AF"))
-    .map(name => `function ${PublicMethods[name].toString()}`);
-
+  const buf = [];
   buf.push(`const [${Object.keys(outputsMap).join(", ")}] = (function() {`);
   buf.push(`const dispatchEvent = '${dispatchEventName}';`);
   buf.push(`const proxyHandler = ${dumpClass(ProxyHandler)};`);
   buf.push("let obj, wrapped;");
 
   imports.map(dumpClass).forEach(dumped => buf.push(dumped));
-  buf.push(`const _document = new Doc({send});`);
+  buf.push("const _document = new Doc({send});");
+  buf.push("const _publics = new PublicMethods(_document);");
   buf.push("const _app = new App({send, _document});");
 
   for (const [name, objs] of Object.entries(objects)) {
     const obj = objs[0];
-    if (obj.id === "436R") {
-      obj.actions.Format = ["this.getField('11').value = 'hello world';"];
+    if (false && obj.id === "436R") {
+      obj.actions.Format = [
+        "AFSimple_Calculate('SUM', new Array ('N.REM1', 'N.REM2', 'N.REM3', 'N.REM4'));",
+      ];
     }
     buf.push(
       `obj = new Field({...${JSON.stringify(obj)}, send});` +

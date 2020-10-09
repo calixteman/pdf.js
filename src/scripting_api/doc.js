@@ -120,6 +120,9 @@ class Doc extends PDFObject {
   }
 
   getField(cName) {
+    if (typeof cName !== "string") {
+      throw new TypeError("Invalid field name: must be a string");
+    }
     if (cName in this._fields) {
       return this._fields[cName];
     }

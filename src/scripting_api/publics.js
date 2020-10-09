@@ -14,7 +14,23 @@
  */
 
 class PublicMethods {
-  static AFNumber_Format(
+  constructor(document) {
+    this._document = document;
+  }
+
+  _convertToFloat(str) {
+    if (typeof str === "number") {
+      return str;
+    }
+    str = str.trim().replace(",", ".");
+    const number = Number.parseFloat(str);
+    if (isNaN(number) || !isFinite(number)) {
+      return 0;
+    }
+    return number;
+  }
+
+  AFNumber_Format(
     nDec,
     sepStyle,
     negStyle,
@@ -27,16 +43,62 @@ class PublicMethods {
     }
 
     nDec = Math.abs(nDec);
-    let value = event.value.trim().replace(",", ".");
-    let number = Number.parseFloat(value);
-    if (isNaN(number) || !isFinite(number)) {
-      number = 0;
+    const number = this._convertToFloat(event.value);
+    event.value = number.toFixed(nDec);
+  }
+
+  AFSimple_Calculate(cFunction, cFields) {
+    const actions = {
+      AVG(args) {
+        return args.reduce((acc, value) => acc + value, 0) / args.length;
+      },
+      SUM(args) {
+        return args.reduce((acc, value) => acc + value, 0);
+      },
+      PRD(args) {
+        return args.reduce((acc, value) => acc * value, 1);
+      },
+      MIN(args) {
+        return args.reduce(
+          (acc, value) => Math.min(acc, value),
+          Number.MAX_VALUE
+        );
+      },
+      MAX(args) {
+        return args.reduce(
+          (acc, value) => Math.max(acc, value),
+          Number.MIN_VALUE
+        );
+      },
+    };
+
+    if (!(cFunction in actions)) {
+      throw new TypeError("Invalid function in AFSimple_Calculate");
     }
-    value = number.toFixed(nDec);
-    if (event.value !== value) {
-      event.source.value = value;
-      event.value = value;
+
+    const values = [];
+    for (const cField of cFields) {
+      const field = this._document.getField(cField);
+      switch (field.type) {
+        case "text":
+        case "combobox":
+        case "listbox":
+          values.push(this._convertToFloat(field.value));
+          break;
+        case "checkbox":
+        case "radio":
+          // TODO: get exportValue
+          break;
+      }
     }
+
+    if (values.length === 0) {
+      event.value = "0";
+      return;
+    }
+
+    const res = actions[cFunction](values);
+    event.value = (Math.round(1e6 * res) / 1e6).toString();
   }
 }
 

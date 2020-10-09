@@ -149,7 +149,7 @@ class App extends PDFObject {
         this.keyDown = data.keyDown || false;
         this.modifier = data.modifier || false;
         this.name = data.name;
-        this.rc = data.rc;
+        this.rc = true;
         this.richChange = data.richChange || [];
         this.richChangeEx = data.richChangeEx || [];
         this.richValue = data.richValue || [];
@@ -178,14 +178,29 @@ class App extends PDFObject {
       // eslint-disable-next-line no-global-assign
       event = new Event(_pdfEvent);
       event.source = event.target = obj.wrapped;
+      const oldValue = obj.obj.value;
       try {
         for (const action of actions[name]) {
           action.bind(this._document)();
         }
+        if (name === "Validate") {
+          if (event.rc) {
+            // Validation is successful
+            // so we can trigger a Calculate
+            this._triggerCalculate(event);
+          } else {
+            // Reset the value
+            event.target.value = oldValue;
+          }
+          return;
+        }
+        if (oldValue !== event.value) {
+          event.target.value = event.value;
+        }
       } catch (error) {
         const value =
           `\"${error.toString()}\" for event ` +
-          `\"${_pdfEvent.name}\" in object ${id}.`;
+          `\"${_pdfEvent.name}\" in object ${id}.\n${error.stack}`;
         this._send({ id: "error", value });
       }
     }
