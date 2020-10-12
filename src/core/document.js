@@ -37,6 +37,7 @@ import {
   Dict,
   isDict,
   isName,
+  isRef,
   isStream,
   Ref,
 } from "./primitives.js";
@@ -1015,6 +1016,26 @@ class PDFDocument {
       }
     }
     return allFields;
+  }
+
+  getCalculationOrder() {
+    const acroForm = this.catalog.acroForm;
+    const refs = [];
+    if (!acroForm || !acroForm.has("CO")) {
+      return refs;
+    }
+
+    const calculationOrder = acroForm.get("CO");
+    if (!Array.isArray(calculationOrder) || calculationOrder.length === 0) {
+      return refs;
+    }
+
+    for (const ref of calculationOrder) {
+      if (isRef(ref)) {
+        refs.push(ref.toString());
+      }
+    }
+    return refs;
   }
 }
 

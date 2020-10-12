@@ -520,6 +520,10 @@ class WorkerMessageHandler {
       return pdfManager.pdfDocument.getFieldObjects();
     });
 
+    handler.on("GetCalculationOrder", function (data) {
+      return pdfManager.pdfDocument.getCalculationOrder();
+    });
+
     handler.on("SaveDocument", function ({
       numPages,
       annotationStorage,

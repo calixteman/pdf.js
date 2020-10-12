@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+import { Event, EventDispatcher } from "./event.js";
 import { App } from "./app.js";
 import { Console } from "./console.js";
 import { Doc } from "./doc.js";
@@ -50,16 +51,19 @@ function dumpClass(clazz) {
   return clazz
     .toString()
     .replace(/extends _[^\.]*\./, "extends ")
+    .replace(/new _[^\.]*\./, "new ")
     .replace(/throw new _error\./g, "throw new ");
 }
 
-function generateCode({ document, objects }) {
+function generateCode({ document, objects, calculationOrder }) {
   const imports = [
     PDFObject,
     NotSupportedError,
     App,
     Console,
     Doc,
+    Event,
+    EventDispatcher,
     Field,
     PrintParams,
     PublicMethods,
@@ -89,21 +93,28 @@ function generateCode({ document, objects }) {
   buf.push("let obj, wrapped;");
 
   imports.map(dumpClass).forEach(dumped => buf.push(dumped));
-  buf.push("const _document = new Doc({send});");
-  buf.push("const _publics = new PublicMethods(_document);");
-  buf.push("const _app = new App({send, _document});");
+  buf.push("const _doc = new Doc({send});");
+  buf.push(
+    "const _document = {obj: _doc, wrapped: new Proxy(_doc, proxyHandler)};"
+  );
+  buf.push("const _publics = new PublicMethods(_doc);");
+
+  const CO = JSON.stringify(calculationOrder);
+  buf.push(
+    `const _app = new App({ send, _document, calculationOrder: ${CO} });`
+  );
 
   for (const [name, objs] of Object.entries(objects)) {
     const obj = objs[0];
-    if (false && obj.id === "436R") {
-      obj.actions.Format = [
-        "AFSimple_Calculate('SUM', new Array ('N.REM1', 'N.REM2', 'N.REM3', 'N.REM4'));",
-      ];
+    if (obj.id === "61R") {
+      obj.actions.Format = ["console.println('COUCOU');"];
     }
     buf.push(
-      `obj = new Field({...${JSON.stringify(obj)}, send});` +
+      `obj = new Field({...${JSON.stringify(
+        obj
+      )}, send, doc: _document.wrapped});` +
         "wrapped = new Proxy(obj, proxyHandler);" +
-        `_document._fields['${name}'] = wrapped;` +
+        `_doc._fields['${name}'] = wrapped;` +
         `_app._objects['${obj.id}'] = {obj, wrapped};`
     );
   }
@@ -113,7 +124,7 @@ function generateCode({ document, objects }) {
   // close & call the function
   buf.push("})();");
 
-  return { dispatchEventName, code: buf.join(""), initCode: "" };
+  return { dispatchEventName, code: buf.join("\n"), initCode: "" };
 }
 
 export { generateCode };

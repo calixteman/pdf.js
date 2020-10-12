@@ -470,47 +470,178 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
 
       element.setAttribute("id", id);
 
-      element.addEventListener("input", function (event) {
+      if (this.data.hidden) {
+        element.style.display = "none";
+      }
+
+      element.addEventListener("input", event => {
         storage.setValue(id, event.target.value);
       });
 
-      element.addEventListener("blur", function (event) {
+      element.addEventListener("blur", event => {
         event.target.setSelectionRange(0, 0);
       });
 
-      if (this.data.actions) {
-        element.addEventListener("updateFromSandbox", function (event) {
-          const data = event.detail;
-          if ("value" in data) {
-            event.target.value = event.detail.value;
-          } else if ("focus" in data) {
-            event.target.focus({ preventScroll: false });
-          }
-        });
-
-        for (const eventType of Object.keys(this.data.actions)) {
-          switch (eventType) {
-            case "Format":
-              element.addEventListener("blur", function (event) {
-                window.dispatchEvent(
-                  new CustomEvent("dispatchEventInSandbox", {
-                    detail: {
-                      field: "value",
-                      id,
-                      event: {
-                        type: "Field",
-                        name: "Format",
-                        value: event.target.value,
-                      },
-                    },
-                  })
-                );
-              });
-              break;
-          }
+      element.addEventListener("updateFromSandbox", event => {
+        const data = event.detail;
+        if ("value" in data) {
+          event.target.value = event.detail.value;
+        } else if ("focus" in data) {
+          event.target.focus({ preventScroll: false });
+        } else if ("hidden" in data) {
+          event.target.style.display = data.hidden ? "none" : "block";
+        } else if ("editable" in data) {
+          event.target.disabled = !data.editable;
         }
-      }
+      });
+      
+      // Even if the field haven't any actions
+      // leaving it can still trigger some actions with Calculate
+      element.addEventListener("keydown", event => {
+        let commitKey = -1;
+        if (event.key === "Escape") {
+          commitKey = 0;
+        } else if (event.key === "Enter") {
+          commitKey = 2;
+        } else if (event.key === "Tab") {
+          commitKey = 3;
+        }
+        if (commitKey === -1) {
+          return;
+        }
+        window.dispatchEvent(
+          new CustomEvent("dispatchEventInSandbox", {
+            detail: {
+              id,
+              name: "KeyStroke",
+              value: event.target.value,
+              willCommit: true,
+              commitKey,
+              selStart: event.target.selectionStart,
+              selEnd: event.target.selectionEnd,
+            },
+          })
+        );
+      });
+      element.addEventListener("focusout", event => {
+        if (window.isMouseDown) {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "KeyStroke",
+                value: event.target.value,
+                willCommit: true,
+                commitKey: 1,
+                selStart: event.target.selectionStart,
+                selEnd: event.target.selectionEnd,
+              },
+            })
+          );
+        }
+      });
 
+      const eventTypes = new Set(Object.keys(this.data.actions));
+      if (eventTypes.has("Blur")) {
+        element.addEventListener("blur", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "Blur",
+                value: event.target.value,
+              },
+            },
+          );
+        });
+      }
+      if (eventTypes.has("Focus")) {
+        element.addEventListener("focus", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "Focus",
+                value: event.target.value,
+              },
+            })
+          );
+        });
+      }
+      if (eventTypes.has("KeyStroke")) {
+        element.addEventListener("input", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "KeyStroke",
+                value: event.target.value,
+                change: event.data,
+                willCommit: false,
+                selStart: event.target.selectionStart,
+                selEnd: event.target.selectionEnd,
+              },
+            })
+          );
+        });
+      }
+      if (eventTypes.has("MouseDown")) {
+        element.addEventListener("mousedown", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "Mouse Down",
+                value: event.target.value,
+                shift: event.shiftKey,
+              },
+            })
+          );
+        });
+      }
+      if (eventTypes.has("MouseEnter")) {
+        element.addEventListener("mouseenter", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "Mouse Enter",
+                value: event.target.value,
+                shift: event.shiftKey,
+              },
+            })
+          );
+        });
+      }
+      if (eventTypes.has("MouseExit")) {
+        element.addEventListener("mouseleave", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "Mouse Exit",
+                value: event.target.value,
+                shift: event.shiftKey,
+              },
+            })
+          );
+        });
+      }
+      if (eventTypes.has("MouseUp")) {
+        element.addEventListener("mouseup", event => {
+          window.dispatchEvent(
+            new CustomEvent("dispatchEventInSandbox", {
+              detail: {
+                id,
+                name: "Mouse Up",
+                value: event.target.value,
+                shift: event.shiftKey,
+              },
+            })
+          );
+        });
+      }
+  
       element.disabled = this.data.readOnly;
       element.name = this.data.fieldName;
 

@@ -1349,8 +1349,17 @@ const PDFViewerApplication = {
     if (!AppOptions.get("enableScripting")) {
       return;
     }
+
     const objects = await pdfDocument.getFieldObjects();
+    const calculationOrder = await pdfDocument.getCalculationOrder();
     const scripting = this.externalServices.scripting;
+
+    window.addEventListener("mousedown", event => {
+      window.isMouseDown = true;
+    });
+    window.addEventListener("mouseup", event => {
+      window.isMouseDown = false;
+    });
 
     window.addEventListener("updateFromSandbox", event => {
       const id = event.detail.id;
@@ -1392,7 +1401,13 @@ const PDFViewerApplication = {
       scripting.dispatchEventInSandbox(event.detail);
     });
 
-    const code = Scripting.getCode({ document: null, objects });
+    const code = Scripting.getCode({
+      document: null,
+      objects,
+      calculationOrder,
+    });
+    // console.log(code.code);
+    // console.log(eval("let send=null;" + code.code));
     scripting.createSandbox(code);
   },
 

@@ -14,6 +14,7 @@
  */
 
 import { NotSupportedError } from "./error.js";
+import { EventDispatcher } from "./event.js";
 import { PDFObject } from "./pdf_object.js";
 
 class App extends PDFObject {
@@ -24,18 +25,24 @@ class App extends PDFObject {
     this._formsVersion = data.formsVersion || 0.0;
     this._language = data.language || "ENU";
     this._platform = data.platform || "WIN";
-    this._objects = Object.create(null);
     this._document = data._document;
     this._specialId = true;
     this._setTimeout = setTimeout;
     this._clearTimeout = clearTimeout;
     this._setInterval = setInterval;
     this._clearInterval = clearInterval;
+
+    this._calculationOrder = data.calculationOrder;
+    this._objects = Object.create(null);
+    this._eventDispatcher = new EventDispatcher(
+      this._document,
+      data.calculationOrder,
+      this._objects
+    );
   }
 
   get activeDocs() {
-    /* TODO */
-    return undefined;
+    return this._document.wrapped;
   }
 
   set activeDocs(_) {
@@ -140,70 +147,7 @@ class App extends PDFObject {
   set viewerVersion(_) {}
 
   _dispatchEvent(pdfEvent) {
-    class Event {
-      constructor(data) {
-        this.change = data.change || "";
-        this.changeEx = data.changeEx || null;
-        this.commitKey = data.commitKey || 0;
-        this.fieldFull = data.fieldFull || false;
-        this.keyDown = data.keyDown || false;
-        this.modifier = data.modifier || false;
-        this.name = data.name;
-        this.rc = true;
-        this.richChange = data.richChange || [];
-        this.richChangeEx = data.richChangeEx || [];
-        this.richValue = data.richValue || [];
-        this.selEnd = data.selEnd || 0;
-        this.selStart = data.selStart || 0;
-        this.shift = data.shift || false;
-        this.source = data.source || null;
-        this.target = data.target || null;
-        this.targetName = data.targetName || "";
-        this.type = data.type || "";
-        this.value = data.value || null;
-        this.willCommit = data.willCommit || false;
-      }
-    }
-    const _pdfEvent = pdfEvent.event;
-    const { field, id } = pdfEvent;
-    if (!(id in this._objects)) {
-      return;
-    }
-    const name = _pdfEvent.name.replace(" ", "");
-    const obj = this._objects[id];
-    obj[field] = _pdfEvent.value;
-    const actions = obj.obj._actions;
-    if (name in actions) {
-      // This stuff is running in a sandbox so it's safe
-      // eslint-disable-next-line no-global-assign
-      event = new Event(_pdfEvent);
-      event.source = event.target = obj.wrapped;
-      const oldValue = obj.obj.value;
-      try {
-        for (const action of actions[name]) {
-          action.bind(this._document)();
-        }
-        if (name === "Validate") {
-          if (event.rc) {
-            // Validation is successful
-            // so we can trigger a Calculate
-            this._triggerCalculate(event);
-          } else {
-            // Reset the value
-            event.target.value = oldValue;
-          }
-          return;
-        }
-        if (oldValue !== event.value) {
-          event.target.value = event.value;
-        }
-      } catch (error) {
-        const value =
-          `\"${error.toString()}\" for event ` +
-          `\"${_pdfEvent.name}\" in object ${id}.\n${error.stack}`;
-        this._send({ id: "error", value });
-      }
-    }
+    this._eventDispatcher.dispatch(pdfEvent);
   }
 
   addMenuItem() {

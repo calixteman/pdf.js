@@ -292,7 +292,6 @@ class Annotation {
   _isViewable(flags) {
     return (
       !this._hasFlag(flags, AnnotationFlag.INVISIBLE) &&
-      !this._hasFlag(flags, AnnotationFlag.HIDDEN) &&
       !this._hasFlag(flags, AnnotationFlag.NOVIEW)
     );
   }
@@ -952,7 +951,7 @@ class WidgetAnnotation extends Annotation {
     }
 
     data.readOnly = this.hasFieldFlag(AnnotationFieldFlag.READONLY);
-    data.hidden = this.hasFieldFlag(AnnotationFieldFlag.HIDDEN);
+    data.hidden = this._hasFlag(data.annotationFlags, AnnotationFlag.HIDDEN);
 
     // Hide signatures because we cannot validate them, and unset the fieldValue
     // since it's (most likely) a `Dict` which is non-serializable and will thus

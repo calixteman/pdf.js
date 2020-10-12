@@ -8,7 +8,11 @@ class Sandbox {
 
   create(code) {
     this.dispatchEventName = code.dispatchEventName;
-    // this._eval("try { " + code.code + "} catch (error) {debugMe(error.message);}");
+    /* this._eval(
+      "try {" +
+      code.code +
+      "} catch (error) {debugMe(error.message);}"
+    ); */
     this._eval(code.code);
     this._eval(
       [
@@ -26,7 +30,12 @@ class Sandbox {
       throw new Error("Sandbox must have been initialized");
     }
     const event = JSON.stringify(data);
-    this._eval(`event = null; app['${this.dispatchEventName}'](${event});`);
+    /* this._eval(
+      "try { " +
+        `app['${this.dispatchEventName}'](${event});` +
+        "} catch (error) {debugMe(error.message);}"
+    ); */
+    this._eval(`app['${this.dispatchEventName}'](${event});`);
   }
 }
 

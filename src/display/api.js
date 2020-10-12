@@ -884,6 +884,15 @@ class PDFDocumentProxy {
   getFieldObjects() {
     return this._transport.getFieldObjects();
   }
+
+  /**
+   * @returns {Promise<Array<String>>} A promise that is resolved with an
+   *   {Array<String>} containing reference of Annotation which have a
+   *   Calculate actio.
+   */
+  getCalculationOrder() {
+    return this._transport.getCalculationOrder();
+  }
 }
 
 /**
@@ -2559,6 +2568,10 @@ class WorkerTransport {
 
   getFieldObjects() {
     return this.messageHandler.sendWithPromise("GetFieldObjects", null);
+  }
+
+  getCalculationOrder() {
+    return this.messageHandler.sendWithPromise("GetCalculationOrder", null);
   }
 
   getDestinations() {

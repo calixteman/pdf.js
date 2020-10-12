@@ -72,10 +72,13 @@ class Field extends PDFObject {
 
     // Private
     this._actions = Object.create(null);
+    const doc = (this._document = data.doc);
     for (const [eventType, actions] of Object.entries(data.actions)) {
       // This stuff is running in a sandbox so it's safe to use Function
-      // eslint-disable-next-line no-new-func
-      this._actions[eventType] = actions.map(action => Function("", action));
+      this._actions[eventType] = actions.map(action =>
+        // eslint-disable-next-line no-new-func
+        Function("event", `with (this) {${action}}`).bind(doc)
+      );
     }
   }
 
@@ -83,11 +86,37 @@ class Field extends PDFObject {
     if (typeof cTrigger !== "string" || typeof cScript !== "string") {
       return;
     }
-    this._actions[cTrigger] = cScript;
+    if (!(cTrigger in this._actions)) {
+      this._actions[cTrigger] = [];
+    }
+    this._actions[cTrigger].push(cScript);
   }
 
   setFocus() {
     this._send({ id: this._id, focus: true });
+  }
+
+  _runActions(event) {
+    const eventName = event.name;
+    if (!(eventName in this._actions)) {
+      return false;
+    }
+
+    const actions = this._actions[eventName];
+    try {
+      for (const action of actions) {
+        action(event);
+      }
+    } catch (error) {
+      event.rc = false;
+      const value =
+        `\"${error.toString()}\" for event ` +
+        `\"${eventName}\" in object ${this._id}.` +
+        `\n${error.stack}`;
+      this._send({ id: "error", value });
+    }
+
+    return true;
   }
 }
 

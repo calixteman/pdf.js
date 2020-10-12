@@ -53,6 +53,7 @@ class Doc extends PDFObject {
 
     this._printParams = null;
     this._fields = Object.create(null);
+    this._event = null;
   }
 
   addAnnot() {

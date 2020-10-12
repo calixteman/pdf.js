@@ -18,10 +18,14 @@ class PublicMethods {
     this._document = document;
   }
 
-  _convertToFloat(str) {
+  AFMakeNumber(str) {
     if (typeof str === "number") {
       return str;
     }
+    if (typeof str !== "string") {
+      return 0;
+    }
+
     str = str.trim().replace(",", ".");
     const number = Number.parseFloat(str);
     if (isNaN(number) || !isFinite(number)) {
@@ -38,12 +42,13 @@ class PublicMethods {
     strCurrency,
     bCurrencyPrepend
   ) {
-    if (event.type !== "Field" || event.name !== "Format" || !event.value) {
+    const event = this._document._event;
+    if (event.type !== "Field" || !event.value) {
       return;
     }
 
     nDec = Math.abs(nDec);
-    const number = this._convertToFloat(event.value);
+    const number = this.AFMakeNumber(event.value);
     event.value = number.toFixed(nDec);
   }
 
@@ -76,6 +81,7 @@ class PublicMethods {
       throw new TypeError("Invalid function in AFSimple_Calculate");
     }
 
+    const event = this._document._event;
     const values = [];
     for (const cField of cFields) {
       const field = this._document.getField(cField);
@@ -83,7 +89,7 @@ class PublicMethods {
         case "text":
         case "combobox":
         case "listbox":
-          values.push(this._convertToFloat(field.value));
+          values.push(this.AFMakeNumber(field.value));
           break;
         case "checkbox":
         case "radio":
