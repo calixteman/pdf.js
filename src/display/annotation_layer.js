@@ -494,7 +494,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
           event.target.disabled = !data.editable;
         }
       });
-      
+
       // Even if the field haven't any actions
       // leaving it can still trigger some actions with Calculate
       element.addEventListener("keydown", event => {
@@ -551,7 +551,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
                 name: "Blur",
                 value: event.target.value,
               },
-            },
+            })
           );
         });
       }
@@ -641,7 +641,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
           );
         });
       }
-  
+
       element.disabled = this.data.readOnly;
       element.name = this.data.fieldName;
 
