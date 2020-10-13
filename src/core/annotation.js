@@ -41,8 +41,8 @@ import {
   Name,
   RefSet,
 } from "./primitives.js";
+import { extractURLFromJS, getInheritableProperty } from "./core_utils.js";
 import { ColorSpace } from "./colorspace.js";
-import { getInheritableProperty } from "./core_utils.js";
 import { OperatorList } from "./operator_list.js";
 import { StringStream } from "./stream.js";
 import { writeDict } from "./writer.js";
@@ -1883,18 +1883,43 @@ class ButtonWidgetAnnotation extends WidgetAnnotation {
   }
 
   _processPushButton(params) {
-    if (!params.dict.has("A") && !this.data.alternativeText) {
+    if (
+      !params.dict.has("A") &&
+      !this.data.alternativeText &&
+      !("MouseDown" in this.data.actions) &&
+      !("MouseUp" in this.data.actions)
+    ) {
       warn("Push buttons without action dictionaries are not supported");
       return;
     }
 
-    this.data.isTooltipOnly = !params.dict.has("A");
-
-    Catalog.parseDestDictionary({
-      destDict: params.dict,
-      resultObj: this.data,
-      docBaseUrl: params.pdfManager.docBaseUrl,
-    });
+    if (!params.dict.has("A")) {
+      let actionName;
+      if ("MouseDown" in this.data.actions) {
+        actionName = "MouseDown";
+      } else if ("MouseUp" in this.data.actions) {
+        actionName = "MouseUp";
+      }
+      if (actionName) {
+        const actions = this.data.actions[actionName];
+        if (actions.length === 1) {
+          const { jsUrl, newWindow } = extractURLFromJS(actions[0]);
+          if (jsUrl) {
+            delete this.data.actions[actionName];
+            this.data.url = jsUrl;
+            this.data.newWindow = newWindow;
+          }
+        }
+      } else {
+        this.data.isTooltipOnly = true;
+      }
+    } else {
+      Catalog.parseDestDictionary({
+        destDict: params.dict,
+        resultObj: this.data,
+        docBaseUrl: params.pdfManager.docBaseUrl,
+      });
+    }
   }
 
   getAnnotationObject() {

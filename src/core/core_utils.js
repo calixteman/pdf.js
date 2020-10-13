@@ -209,8 +209,35 @@ function escapePDFName(str) {
   return buffer.join("");
 }
 
+function extractURLFromJS(code) {
+  // Attempt to recover valid URLs from `JS` entries with certain
+  // white-listed formats:
+  //  - window.open('http://example.com')
+  //  - app.launchURL('http://example.com', true)
+  const URL_OPEN_METHODS = ["app.launchURL", "window.open"];
+  const regex = new RegExp(
+    "^\\s*(" +
+      URL_OPEN_METHODS.join("|").split(".").join("\\.") +
+      ")\\((?:'|\")([^'\"]*)(?:'|\")(?:,\\s*(\\w+)\\)|\\))",
+    "i"
+  );
+
+  let url;
+  let newWindow;
+  const jsUrl = regex.exec(code);
+  if (jsUrl && jsUrl[2]) {
+    url = jsUrl[2];
+
+    if (jsUrl[3] === "true" && jsUrl[1] === "app.launchURL") {
+      newWindow = true;
+    }
+  }
+  return { jsUrl: url, newWindow };
+}
+
 export {
   escapePDFName,
+  extractURLFromJS,
   getLookupTableFactory,
   MissingDataException,
   XRefEntryException,
