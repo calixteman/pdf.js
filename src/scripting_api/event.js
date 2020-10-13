@@ -43,6 +43,8 @@ class EventDispatcher {
     this._document = document;
     this._calculationOrder = calculationOrder;
     this._objects = objects;
+
+    this._document.obj._eventDispatcher = this;
   }
 
   dispatch(baseEvent) {
@@ -69,7 +71,9 @@ class EventDispatcher {
         source.obj.value = oldValue = event.value;
       }
 
-      this.runCalculate(source, event);
+      if (this._document.obj.calculate) {
+        this.runCalculate(source, event);
+      }
 
       event.value = oldValue;
       this.runActions(source, source, event, "Format");
@@ -88,6 +92,16 @@ class EventDispatcher {
       return true;
     }
     return event.rc;
+  }
+
+  calculateNow() {
+    if (this._calculationOrder.length === 0) {
+      return;
+    }
+    const first = this._calculationOrder[0];
+    const source = this._objects[first];
+    const event = (this._document.obj._event = new Event({}));
+    this.runCalculate(source, event);
   }
 
   runCalculate(source, event) {

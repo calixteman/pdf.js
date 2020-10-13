@@ -924,6 +924,12 @@ class WidgetAnnotation extends Annotation {
       getArray: true,
     });
     data.fieldValue = this._decodeFormValue(fieldValue);
+    const defaultFieldValue = getInheritableProperty({
+      dict,
+      key: "DV",
+      getArray: true,
+    });
+    data.defaultFieldValue = this._decodeFormValue(defaultFieldValue);
 
     data.alternativeText = stringToPDFString(dict.get("TU") || "");
     data.defaultAppearance =
@@ -1439,6 +1445,16 @@ class WidgetAnnotation extends Annotation {
         }
       }
     }
+    // Collect the Action if any (we may have one on pushbutton)
+    if (dict.has("A")) {
+      const actionDict = dict.get("A");
+      const parents = new RefSet();
+      const list = [];
+      this._collectJS(actionDict, xref, list, parents);
+      if (list.length > 0) {
+        actions.Action = list;
+      }
+    }
     return actions;
   }
 
@@ -1607,6 +1623,7 @@ class TextWidgetAnnotation extends WidgetAnnotation {
     return {
       id: this.data.id,
       value: this.data.fieldValue,
+      defaultValue: this.data.defaultFieldValue || "",
       multiline: this.data.multiline,
       password: this.hasFieldFlag(AnnotationFieldFlag.PASSWORD),
       charLimit: this.data.maxLen,
@@ -1935,6 +1952,7 @@ class ButtonWidgetAnnotation extends WidgetAnnotation {
     return {
       id: this.data.id,
       value,
+      defaultValue: this.data.defaultFieldValue,
       editable: !this.data.readOnly,
       name: this.data.fieldName,
       rect: this.data.rect,

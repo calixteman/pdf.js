@@ -293,7 +293,8 @@ class LinkAnnotationElement extends AnnotationElement {
       parameters.data.url ||
       parameters.data.dest ||
       parameters.data.action ||
-      parameters.data.isTooltipOnly
+      parameters.data.isTooltipOnly ||
+      parameters.data.actions.Action
     );
     super(parameters, isRenderable);
   }
@@ -324,6 +325,8 @@ class LinkAnnotationElement extends AnnotationElement {
       this._bindNamedAction(link, data.action);
     } else if (data.dest) {
       this._bindLink(link, data.dest);
+    } else if (data.actions.Action) {
+      this._bindJSAction(link, this.data.id);
     } else {
       this._bindLink(link, "");
     }
@@ -365,6 +368,30 @@ class LinkAnnotationElement extends AnnotationElement {
     link.href = this.linkService.getAnchorUrl("");
     link.onclick = () => {
       this.linkService.executeNamedAction(action);
+      return false;
+    };
+    link.className = "internalLink";
+  }
+
+  /**
+   * Bind named actions to the link element.
+   *
+   * @private
+   * @param {Object} link
+   * @param {Object} action
+   * @memberof LinkAnnotationElement
+   */
+  _bindJSAction(link, id) {
+    link.href = this.linkService.getAnchorUrl("#");
+    link.onclick = () => {
+      window.dispatchEvent(
+        new CustomEvent("dispatchEventInSandbox", {
+          detail: {
+            id,
+            name: "Action",
+          },
+        })
+      );
       return false;
     };
     link.className = "internalLink";
@@ -485,7 +512,13 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       element.addEventListener("updateFromSandbox", event => {
         const data = event.detail;
         if ("value" in data) {
-          event.target.value = event.detail.value;
+          const value = event.detail.value;
+          if (value === undefined || value === null) {
+            // remove data
+            event.target.value = "";
+          } else {
+            event.target.value = value;
+          }
         } else if ("focus" in data) {
           event.target.focus({ preventScroll: false });
         } else if ("hidden" in data) {

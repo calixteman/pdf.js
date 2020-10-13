@@ -23,7 +23,7 @@ class Doc extends PDFObject {
     this.author = data.author || "";
     this.baseURL = data.baseURL || "";
     this.bookmarkRoot = data.bookmarkRoot || null;
-    this.calculate = data.calculate || false;
+    this.calculate = data.calculate || true;
     this.creationDate = data.creationDate || null;
     this.creator = data.creator || "";
     this.delay = data.delay || false;
@@ -73,7 +73,7 @@ class Doc extends PDFObject {
   }
 
   calculateNow() {
-    /* TODO */
+    this._eventDispatcher.calculateNow();
   }
 
   closeDoc() {
@@ -249,8 +249,25 @@ class Doc extends PDFObject {
     /* Not implemented */
   }
 
-  resetForm() {
-    /* TODO */
+  resetForm(aFields = null) {
+    let fields;
+    if (aFields) {
+      fields = [];
+      for (const fieldName of aFields) {
+        const field = this._fields[fieldName];
+        if (field) {
+          fields.push(field);
+        }
+      }
+    } else {
+      fields = Object.values(this._fields);
+    }
+    if (fields.length > 0) {
+      for (const field of fields) {
+        field.value = field.defaultValue;
+      }
+      this.calculateNow();
+    }
   }
 
   removeIcon() {

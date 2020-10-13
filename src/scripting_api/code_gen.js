@@ -106,8 +106,8 @@ function generateCode({ document, objects, calculationOrder }) {
 
   for (const [name, objs] of Object.entries(objects)) {
     const obj = objs[0];
-    if (obj.id === "61R") {
-      obj.actions.Format = ["console.println('COUCOU');"];
+    if (false && obj.id === "27R") {
+      obj.actions.Action = ["console.println('COUCOU');"];
     }
     buf.push(
       `obj = new Field({...${JSON.stringify(
