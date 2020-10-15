@@ -507,30 +507,57 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
 
       element.addEventListener("blur", event => {
         event.target.setSelectionRange(0, 0);
+        event.target.beforeInputSelectionRange = null;
+      });
+
+      element.addEventListener("focus", event => {
+        if (event.target.userValue) {
+          event.target.value = event.target.userValue;
+        }
       });
 
       element.addEventListener("updateFromSandbox", event => {
         const data = event.detail;
-        if ("value" in data) {
-          const value = event.detail.value;
-          if (value === undefined || value === null) {
-            // remove data
-            event.target.value = "";
-          } else {
-            event.target.value = value;
+        const actions = {
+          value(_event) {
+            const value = _event.detail.value;
+            if (value === undefined || value === null) {
+              // remove data
+              _event.target.value = "";
+            } else {
+              _event.target.value = value;
+            }
+            storage.setValue(id, _event.target.value);
+          },
+          focus(_event) {
+            _event.target.focus({ preventScroll: false });
+          },
+          hidden(_event) {
+            _event.target.style.display = _event.detail.hidden
+              ? "none"
+              : "block";
+          },
+          editable(_event) {
+            _event.target.disabled = !_event.detail.editable;
+          },
+          selRange(_event) {
+            const [selStart, selEnd] = _event.detail.selRange;
+            if (selStart >= 0 && selEnd < _event.target.value.length) {
+              _event.target.setSelectionRange(selStart, selEnd);
+            }
+          },
+        };
+        for (const name of Object.keys(data)) {
+          if (name in actions) {
+            actions[name](event);
           }
-        } else if ("focus" in data) {
-          event.target.focus({ preventScroll: false });
-        } else if ("hidden" in data) {
-          event.target.style.display = data.hidden ? "none" : "block";
-        } else if ("editable" in data) {
-          event.target.disabled = !data.editable;
         }
       });
 
       // Even if the field haven't any actions
       // leaving it can still trigger some actions with Calculate
       element.addEventListener("keydown", event => {
+        event.target.beforeInputValue = event.target.value;
         let commitKey = -1;
         if (event.key === "Escape") {
           commitKey = 0;
@@ -542,6 +569,8 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
         if (commitKey === -1) {
           return;
         }
+        // Save the entered value
+        event.target.userValue = event.target.value;
         window.dispatchEvent(
           new CustomEvent("dispatchEventInSandbox", {
             detail: {
@@ -558,6 +587,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       });
       element.addEventListener("focusout", event => {
         if (window.isMouseDown) {
+          event.target.userValue = event.target.value;
           window.dispatchEvent(
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
@@ -572,6 +602,21 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
             })
           );
         }
+      });
+      element.addEventListener("mousedown", event => {
+        event.target.beforeInputValue = event.target.value;
+        event.target.beforeInputSelectionRange = null;
+      });
+      element.addEventListener("keyup", event => {
+        // keyup is triggered after input
+        event.target.beforeInputSelectionRange = null;
+      });
+      element.addEventListener("select", event => {
+        const target = event.target;
+        target.beforeInputSelectionRange = [
+          target.selectionStart,
+          target.selectionEnd,
+        ];
       });
 
       const eventTypes = new Set(Object.keys(this.data.actions));
@@ -602,17 +647,25 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
         });
       }
       if (eventTypes.has("KeyStroke")) {
+        // We should use beforeinput but this
+        // event isn't available in Firefox
         element.addEventListener("input", event => {
+          const target = event.target;
+          let selStart = -1;
+          let selEnd = -1;
+          if (target.beforeInputSelectionRange) {
+            [selStart, selEnd] = target.beforeInputSelectionRange;
+          }
           window.dispatchEvent(
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
                 id,
                 name: "KeyStroke",
-                value: event.target.value,
+                value: event.target.beforeInputValue,
                 change: event.data,
                 willCommit: false,
-                selStart: event.target.selectionStart,
-                selEnd: event.target.selectionEnd,
+                selStart,
+                selEnd,
               },
             })
           );

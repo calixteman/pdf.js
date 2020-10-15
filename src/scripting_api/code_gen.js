@@ -14,6 +14,7 @@
  */
 
 import { Event, EventDispatcher } from "./event.js";
+import { AFormat } from "./aformat.js";
 import { App } from "./app.js";
 import { Console } from "./console.js";
 import { Doc } from "./doc.js";
@@ -22,7 +23,6 @@ import { NotSupportedError } from "./error.js";
 import { PDFObject } from "./pdf_object.js";
 import { PrintParams } from "./print_params.js";
 import { ProxyHandler } from "./proxy.js";
-import { PublicMethods } from "./publics.js";
 import { Util } from "./util.js";
 
 function generateRandomString(actions) {
@@ -66,19 +66,19 @@ function generateCode({ document, objects, calculationOrder }) {
     EventDispatcher,
     Field,
     PrintParams,
-    PublicMethods,
+    AFormat,
     Util,
   ];
   const outputsMap = {
     global: "Object.create(null)",
     app: "new Proxy(_app, proxyHandler)",
     console: "new Proxy(new Console({send}), proxyHandler)",
-    util: "new Proxy(new Util({crackURL}), proxyHandler)",
+    util: "new Proxy(_util, proxyHandler)",
   };
 
-  for (const name of Object.getOwnPropertyNames(PublicMethods.prototype)) {
+  for (const name of Object.getOwnPropertyNames(AFormat.prototype)) {
     if (name.startsWith("AF")) {
-      outputsMap[name] = `_publics.${name}.bind(_publics)`;
+      outputsMap[name] = `_aformat.${name}.bind(_aformat)`;
     }
   }
 
@@ -97,12 +97,13 @@ function generateCode({ document, objects, calculationOrder }) {
   buf.push(
     "const _document = {obj: _doc, wrapped: new Proxy(_doc, proxyHandler)};"
   );
-  buf.push("const _publics = new PublicMethods(_doc);");
 
   const CO = JSON.stringify(calculationOrder);
   buf.push(
     `const _app = new App({ send, _document, calculationOrder: ${CO} });`
   );
+  buf.push("const _util = new Util({crackURL});");
+  buf.push("const _aformat = new AFormat(_doc, _app, _util);");
 
   for (const [name, objs] of Object.entries(objects)) {
     const obj = objs[0];

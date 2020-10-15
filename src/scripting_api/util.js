@@ -20,6 +20,29 @@ class Util extends PDFObject {
     super(data);
 
     this._crackURL = data.crackURL;
+    this._months = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    this._days = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
   }
 
   crackURL(cURL) {
@@ -35,7 +58,7 @@ class Util extends PDFObject {
       throw new TypeError("First argument of printf must be a string");
     }
 
-    const pattern = /%(,[0123])?([\+ 0#]+)?([0-9]+)?(\.[0-9]+)?([dfsx])/g;
+    const pattern = /%(,[0-9])?([\+ 0#]+)?([0-9]+)?(\.[0-9]+)?([dfsx])/g;
     const PLUS = 1;
     const SPACE = 2;
     const ZERO = 4;
@@ -91,18 +114,20 @@ class Util extends PDFObject {
         return hex;
       }
 
-      const nDecSep = p1 ? p1.charCodeAt(1) : "0";
+      const nDecSep = p1 ? p1.substring(1) : "0";
       let nPrecision;
       if (p4) {
         nPrecision = parseInt(p4.substring(1));
       }
 
-      const [thousandSep, decimalSep] = {
+      const separators = {
         0: [",", "."],
         1: ["", "."],
         2: [".", ","],
         3: ["", ","],
-      }[nDecSep];
+      };
+      const [thousandSep, decimalSep] =
+        nDecSep in separators ? separators[nDecSep] : ["'", "."];
 
       let decPart = "";
       if (cConvChar === "f") {
@@ -168,35 +193,12 @@ class Util extends PDFObject {
         return this.printd("m/d/yy h:MM:ss tt", cDate);
     }
 
-    const months = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
-    const days = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
     const handlers = {
       mmmm(data) {
-        return months[data.month];
+        return this._months[data.month];
       },
       mmm(data) {
-        return months[data.month].substring(0, 3);
+        return this._months[data.month].substring(0, 3);
       },
       mm(data) {
         return (data.month + 1).toString().padStart(2, "0");
@@ -205,10 +207,10 @@ class Util extends PDFObject {
         return (data.month + 1).toString();
       },
       dddd(data) {
-        return days[data.dayOfWeek];
+        return this._days[data.dayOfWeek];
       },
       ddd(data) {
-        return days[data.dayOfWeek].substring(0, 3);
+        return this._days[data.dayOfWeek].substring(0, 3);
       },
       dd(data) {
         return data.day.toString().padStart(2, "0");
@@ -348,6 +350,8 @@ class Util extends PDFObject {
         case "=":
           currCase = handlers[0];
           break;
+        default:
+          buf.push(command);
       }
     }
 
@@ -365,44 +369,20 @@ class Util extends PDFObject {
     }
 
     let am = true;
-
-    const months = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
-    const days = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
     const handlers = {
       mmmm() {
         return {
-          pat: `(${months.join("|")})`,
+          pat: `(${this._months.join("|")})`,
           action(value, data) {
-            data.month = months.indexOf(value);
+            data.month = this._months.indexOf(value);
           },
         };
       },
       mmm() {
         return {
-          pat: `(${months.map(month => month.substring(0, 3)).join("|")})`,
+          pat: `(${this._months.map(month => month.substring(0, 3)).join("|")})`,
           action(value, data) {
-            data.month = months.findIndex(
+            data.month = this._months.findIndex(
               month => month.substring(0, 3) === value
             );
           },
@@ -426,17 +406,17 @@ class Util extends PDFObject {
       },
       dddd() {
         return {
-          pat: `(${days.join("|")})`,
+          pat: `(${this._days.join("|")})`,
           action(value, data) {
-            data.day = days.indexOf(value);
+            data.day = this._days.indexOf(value);
           },
         };
       },
       ddd() {
         return {
-          pat: `(${days.map(day => day.substring(0, 3)).join("|")})`,
+          pat: `(${this._days.map(day => day.substring(0, 3)).join("|")})`,
           action(value, data) {
-            data.day = days.findIndex(day => day.substring(0, 3) === value);
+            data.day = this._days.findIndex(day => day.substring(0, 3) === value);
           },
         };
       },
@@ -538,17 +518,18 @@ class Util extends PDFObject {
       },
       tt() {
         return {
-          pat: "([ap]m)",
+          pat: "([aApP][mM])",
           action(value, data) {
-            am = value === "am";
+            const char = value.charAt(0);
+            am = char === "a" || char === "A";
           },
         };
       },
       t() {
         return {
-          pat: "([ap])",
+          pat: "([aApP])",
           action(value, data) {
-            am = value === "am";
+            am = value === "a" || value === "A";
           },
         };
       },
@@ -568,7 +549,7 @@ class Util extends PDFObject {
 
     const matches = new RegExp(re, "g").exec(cDate);
     if (matches.length !== actions.length + 1) {
-      throw new Error("Something wrong in util.scand");
+      throw new Error("Invalid date util.scand");
     }
 
     const data = {
