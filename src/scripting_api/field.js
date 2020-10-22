@@ -72,6 +72,7 @@ class Field extends PDFObject {
 
     // Private
     this._actions = Object.create(null);
+    this._actionsS = Object.create(null);
     const doc = (this._document = data.doc);
     for (const [eventType, actions] of Object.entries(data.actions)) {
       // This stuff is running in a sandbox so it's safe to use Function
@@ -79,6 +80,7 @@ class Field extends PDFObject {
         // eslint-disable-next-line no-new-func
         Function("event", `with (this) {${action}}`).bind(doc)
       );
+      this._actionsS[eventType] = actions[0];
     }
   }
 
@@ -102,6 +104,7 @@ class Field extends PDFObject {
       return false;
     }
 
+    //console.println(`${this._id}: ${event.name}: ${this._actionsS[eventName]}`);
     const actions = this._actions[eventName];
     try {
       for (const action of actions) {

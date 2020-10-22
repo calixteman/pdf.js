@@ -20,6 +20,7 @@ class Util extends PDFObject {
     super(data);
 
     this._crackURL = data.crackURL;
+    this._scandCache = Object.create(null);
     this._months = [
       "January",
       "February",
@@ -368,186 +369,195 @@ class Util extends PDFObject {
         return this.scand("m/d/yy h:MM:ss tt", cDate);
     }
 
-    let am = true;
-    const handlers = {
-      mmmm() {
-        return {
-          pat: `(${this._months.join("|")})`,
-          action(value, data) {
-            data.month = this._months.indexOf(value);
-          },
-        };
-      },
-      mmm() {
-        return {
-          pat: `(${this._months.map(month => month.substring(0, 3)).join("|")})`,
-          action(value, data) {
-            data.month = this._months.findIndex(
-              month => month.substring(0, 3) === value
-            );
-          },
-        };
-      },
-      mm() {
-        return {
-          pat: `([0-9]{2})`,
-          action(value, data) {
-            data.month = parseInt(value) - 1;
-          },
-        };
-      },
-      m() {
-        return {
-          pat: `([0-9]{1,2})`,
-          action(value, data) {
-            data.month = parseInt(value) - 1;
-          },
-        };
-      },
-      dddd() {
-        return {
-          pat: `(${this._days.join("|")})`,
-          action(value, data) {
-            data.day = this._days.indexOf(value);
-          },
-        };
-      },
-      ddd() {
-        return {
-          pat: `(${this._days.map(day => day.substring(0, 3)).join("|")})`,
-          action(value, data) {
-            data.day = this._days.findIndex(day => day.substring(0, 3) === value);
-          },
-        };
-      },
-      dd() {
-        return {
-          pat: "([0-9]{2})",
-          action(value, data) {
-            data.day = parseInt(value);
-          },
-        };
-      },
-      d() {
-        return {
-          pat: "([0-9]{1,2})",
-          action(value, data) {
-            data.day = parseInt(value);
-          },
-        };
-      },
-      yyyy() {
-        return {
-          pat: "([0-9]{4})",
-          action(value, data) {
-            data.year = parseInt(value);
-          },
-        };
-      },
-      yy() {
-        return {
-          pat: "([0-9]{2})",
-          action(value, data) {
-            data.year = 2000 + parseInt(value);
-          },
-        };
-      },
-      HH() {
-        return {
-          pat: "([0-9]{2})",
-          action(value, data) {
-            data.hours = parseInt(value);
-          },
-        };
-      },
-      H() {
-        return {
-          pat: "([0-9]{1,2})",
-          action(value, data) {
-            data.hours = parseInt(value);
-          },
-        };
-      },
-      hh() {
-        return {
-          pat: "([0-9]{2})",
-          action(value, data) {
-            data.hours = parseInt(value);
-          },
-        };
-      },
-      h() {
-        return {
-          pat: "([0-9]{1,2})",
-          action(value, data) {
-            data.hours = parseInt(value);
-          },
-        };
-      },
-      MM() {
-        return {
-          pat: "([0-9]{2})",
-          action(value, data) {
-            data.minutes = parseInt(value);
-          },
-        };
-      },
-      M() {
-        return {
-          pat: "([0-9]{1,2})",
-          action(value, data) {
-            data.minutes = parseInt(value);
-          },
-        };
-      },
-      ss() {
-        return {
-          pat: "([0-9]{2})",
-          action(value, data) {
-            data.seconds = parseInt(value);
-          },
-        };
-      },
-      s() {
-        return {
-          pat: "([0-9]{1,2})",
-          action(value, data) {
-            data.seconds = parseInt(value);
-          },
-        };
-      },
-      tt() {
-        return {
-          pat: "([aApP][mM])",
-          action(value, data) {
-            const char = value.charAt(0);
-            am = char === "a" || char === "A";
-          },
-        };
-      },
-      t() {
-        return {
-          pat: "([aApP])",
-          action(value, data) {
-            am = value === "a" || value === "A";
-          },
-        };
-      },
-    };
+    if (!cFormat in this.scandCache) {
+      const handlers = {
+        mmmm() {
+          return {
+            pat: `(${this._months.join("|")})`,
+            action(value, data) {
+              data.month = this._months.indexOf(value);
+            },
+          };
+        },
+        mmm() {
+          return {
+            pat: `(${this._months
+              .map(month => month.substring(0, 3))
+              .join("|")})`,
+            action(value, data) {
+              data.month = this._months.findIndex(
+                month => month.substring(0, 3) === value
+              );
+            },
+          };
+        },
+        mm() {
+          return {
+            pat: `([0-9]{2})`,
+            action(value, data) {
+              data.month = parseInt(value) - 1;
+            },
+          };
+        },
+        m() {
+          return {
+            pat: `([0-9]{1,2})`,
+            action(value, data) {
+              data.month = parseInt(value) - 1;
+            },
+          };
+        },
+        dddd() {
+          return {
+            pat: `(${this._days.join("|")})`,
+            action(value, data) {
+              data.day = this._days.indexOf(value);
+            },
+          };
+        },
+        ddd() {
+          return {
+            pat: `(${this._days.map(day => day.substring(0, 3)).join("|")})`,
+            action(value, data) {
+              data.day = this._days.findIndex(
+                day => day.substring(0, 3) === value
+              );
+            },
+          };
+        },
+        dd() {
+          return {
+            pat: "([0-9]{2})",
+            action(value, data) {
+              data.day = parseInt(value);
+            },
+          };
+        },
+        d() {
+          return {
+            pat: "([0-9]{1,2})",
+            action(value, data) {
+              data.day = parseInt(value);
+            },
+          };
+        },
+        yyyy() {
+          return {
+            pat: "([0-9]{4})",
+            action(value, data) {
+              data.year = parseInt(value);
+            },
+          };
+        },
+        yy() {
+          return {
+            pat: "([0-9]{2})",
+            action(value, data) {
+              data.year = 2000 + parseInt(value);
+            },
+          };
+        },
+        HH() {
+          return {
+            pat: "([0-9]{2})",
+            action(value, data) {
+              data.hours = parseInt(value);
+            },
+          };
+        },
+        H() {
+          return {
+            pat: "([0-9]{1,2})",
+            action(value, data) {
+              data.hours = parseInt(value);
+            },
+          };
+        },
+        hh() {
+          return {
+            pat: "([0-9]{2})",
+            action(value, data) {
+              data.hours = parseInt(value);
+            },
+          };
+        },
+        h() {
+          return {
+            pat: "([0-9]{1,2})",
+            action(value, data) {
+              data.hours = parseInt(value);
+            },
+          };
+        },
+        MM() {
+          return {
+            pat: "([0-9]{2})",
+            action(value, data) {
+              data.minutes = parseInt(value);
+            },
+          };
+        },
+        M() {
+          return {
+            pat: "([0-9]{1,2})",
+            action(value, data) {
+              data.minutes = parseInt(value);
+            },
+          };
+        },
+        ss() {
+          return {
+            pat: "([0-9]{2})",
+            action(value, data) {
+              data.seconds = parseInt(value);
+            },
+          };
+        },
+        s() {
+          return {
+            pat: "([0-9]{1,2})",
+            action(value, data) {
+              data.seconds = parseInt(value);
+            },
+          };
+        },
+        tt() {
+          return {
+            pat: "([aApP][mM])",
+            action(value, data) {
+              const char = value.charAt(0);
+              data.am = char === "a" || char === "A";
+            },
+          };
+        },
+        t() {
+          return {
+            pat: "([aApP])",
+            action(value, data) {
+              data.am = value === "a" || value === "A";
+            },
+          };
+        },
+      };
 
-    // escape the string
-    cFormat = cFormat.replace(/[.*+\-?^${}()|[\]\\]/g, "\\$&");
+      // escape the string
+      cFormat = cFormat.replace(/[.*+\-?^${}()|[\]\\]/g, "\\$&");
 
-    const pattern = /(mmmm|mmm|mm|m|dddd|ddd|dd|d|yyyy|yy|HH|H|hh|h|MM|M|ss|s|tt|t)/g;
-    const actions = [];
+      const pattern = /(mmmm|mmm|mm|m|dddd|ddd|dd|d|yyyy|yy|HH|H|hh|h|MM|M|ss|s|tt|t)/g;
+      const actions = [];
 
-    const re = cFormat.replace(pattern, function (match, p1) {
-      const { pat, action } = handlers[p1]();
-      actions.push(action);
-      return pat;
-    });
+      const re = cFormat.replace(pattern, function (match, p1) {
+        const { pat, action } = handlers[p1]();
+        actions.push(action);
+        return pat;
+      });
 
-    const matches = new RegExp(re, "g").exec(cDate);
+      this.scandCache[cFormat] = [new RegExp(re, "g"), actions];
+    }
+
+    const [regexForFormat, actions] = this.scandCache[cFormat];
+
+    const matches = regexForFormat.exec(cDate);
     if (matches.length !== actions.length + 1) {
       throw new Error("Invalid date util.scand");
     }
@@ -559,9 +569,10 @@ class Util extends PDFObject {
       hours: 0,
       minutes: 0,
       seconds: 0,
+      am: true,
     };
     actions.forEach((action, i) => action(matches[i + 1], data));
-    if (!am) {
+    if (!data.am) {
       data.hours += 12;
     }
 

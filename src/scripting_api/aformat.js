@@ -39,18 +39,11 @@ class AFormat {
 
   AFMergeChange() {
     const event = this._document._event;
-    const value = event.value;
-
     if (event.willCommit) {
-      return event.value;
+      return event.value.toString();
     }
 
-    const { selStart, selEnd } = event;
-    const prefix = selStart >= 0 ? value.substring(0, selStart) : "";
-    const postfix =
-      selEnd >= 0 && selEnd <= value.length ? value.substring(selEnd) : "";
-
-    return prefix + event.change + postfix;
+    return this._app._eventDispatcher.mergeChange(event);
   }
 
   AFExtractNums(str) {
@@ -128,7 +121,7 @@ class AFormat {
 
     buf.push("%,");
     buf.push(sepStyle);
-    buf.push(".")
+    buf.push(".");
     buf.push(nDec.toString());
     buf.push("f");
 

@@ -523,6 +523,15 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
             const value = _event.detail.value;
             if (value === undefined || value === null) {
               // remove data
+              _event.target.userValue = "";
+            } else {
+              _event.target.userValue = value;
+            }
+          },
+          valueAsString(_event) {
+            const value = _event.detail.valueAsString;
+            if (value === undefined || value === null) {
+              // remove data
               _event.target.value = "";
             } else {
               _event.target.value = value;
@@ -575,7 +584,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
           new CustomEvent("dispatchEventInSandbox", {
             detail: {
               id,
-              name: "KeyStroke",
+              name: "Keystroke",
               value: event.target.value,
               willCommit: true,
               commitKey,
@@ -592,7 +601,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
                 id,
-                name: "KeyStroke",
+                name: "Keystroke",
                 value: event.target.value,
                 willCommit: true,
                 commitKey: 1,
@@ -609,7 +618,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       });
       element.addEventListener("keyup", event => {
         // keyup is triggered after input
-        event.target.beforeInputSelectionRange = null;
+        if (event.target.selectionStart === event.target.selectionEnd) {
+          event.target.beforeInputSelectionRange = null;
+        }
       });
       element.addEventListener("select", event => {
         const target = event.target;
@@ -646,7 +657,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
           );
         });
       }
-      if (eventTypes.has("KeyStroke")) {
+      if (eventTypes.has("Keystroke")) {
         // We should use beforeinput but this
         // event isn't available in Firefox
         element.addEventListener("input", event => {
@@ -660,7 +671,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
                 id,
-                name: "KeyStroke",
+                name: "Keystroke",
                 value: event.target.beforeInputValue,
                 change: event.data,
                 willCommit: false,
@@ -673,6 +684,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       }
       if (eventTypes.has("MouseDown")) {
         element.addEventListener("mousedown", event => {
+          const modifier =
+            (navigator.platform.includes("Win") && event.ctrlKey) ||
+            (navigator.platform.includes("Mac") && event.metaKey);
           window.dispatchEvent(
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
@@ -680,6 +694,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
                 name: "Mouse Down",
                 value: event.target.value,
                 shift: event.shiftKey,
+                modifier,
               },
             })
           );
@@ -687,6 +702,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       }
       if (eventTypes.has("MouseEnter")) {
         element.addEventListener("mouseenter", event => {
+          const modifier =
+            (navigator.platform.includes("Win") && event.ctrlKey) ||
+            (navigator.platform.includes("Mac") && event.metaKey);
           window.dispatchEvent(
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
@@ -694,6 +712,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
                 name: "Mouse Enter",
                 value: event.target.value,
                 shift: event.shiftKey,
+                modifier,
               },
             })
           );
@@ -701,6 +720,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       }
       if (eventTypes.has("MouseExit")) {
         element.addEventListener("mouseleave", event => {
+          const modifier =
+            (navigator.platform.includes("Win") && event.ctrlKey) ||
+            (navigator.platform.includes("Mac") && event.metaKey);
           window.dispatchEvent(
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
@@ -708,6 +730,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
                 name: "Mouse Exit",
                 value: event.target.value,
                 shift: event.shiftKey,
+                modifier,
               },
             })
           );
@@ -715,6 +738,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
       }
       if (eventTypes.has("MouseUp")) {
         element.addEventListener("mouseup", event => {
+          const modifier =
+            (navigator.platform.includes("Win") && event.ctrlKey) ||
+            (navigator.platform.includes("Mac") && event.metaKey);
           window.dispatchEvent(
             new CustomEvent("dispatchEventInSandbox", {
               detail: {
@@ -722,6 +748,7 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
                 name: "Mouse Up",
                 value: event.target.value,
                 shift: event.shiftKey,
+                modifier,
               },
             })
           );
