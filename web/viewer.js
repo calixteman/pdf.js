@@ -155,6 +155,7 @@ function getViewerConfiguration() {
       highlightAllCheckbox: document.getElementById("findHighlightAll"),
       caseSensitiveCheckbox: document.getElementById("findMatchCase"),
       entireWordCheckbox: document.getElementById("findEntireWord"),
+      matchDiacriticsCheckbox: document.getElementById("findMatchDiacritics"),
       findMsg: document.getElementById("findMsg"),
       findResultsCount: document.getElementById("findResultsCount"),
       findPreviousButton: document.getElementById("findPrevious"),

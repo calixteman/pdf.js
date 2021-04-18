@@ -2603,6 +2603,7 @@ function webViewerFind(evt) {
     entireWord: evt.entireWord,
     highlightAll: evt.highlightAll,
     findPrevious: evt.findPrevious,
+    matchDiacritics: evt.matchDiacritics,
   });
 }
 
@@ -2614,6 +2615,7 @@ function webViewerFindFromUrlHash(evt) {
     entireWord: false,
     highlightAll: true,
     findPrevious: false,
+    matchDiacritics: true,
   });
 }
 
@@ -2820,6 +2822,7 @@ function webViewerKeyDown(evt) {
               entireWord: findState.entireWord,
               highlightAll: findState.highlightAll,
               findPrevious: cmd === 5 || cmd === 12,
+              matchDiacritics: findState.matchDiacritics,
             });
           }
           handled = true;

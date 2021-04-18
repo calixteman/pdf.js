@@ -218,6 +218,7 @@ class MozL10n {
     "findcasesensitivitychange",
     "findentirewordchange",
     "findbarclose",
+    "finddiacriticmatchingchange",
   ];
   const handleEvent = function ({ type, detail }) {
     if (!PDFViewerApplication.initialized) {
@@ -236,6 +237,7 @@ class MozL10n {
       entireWord: !!detail.entireWord,
       highlightAll: !!detail.highlightAll,
       findPrevious: !!detail.findPrevious,
+      matchDiacritics: !!detail.matchDiacritics,
     });
   };
 

@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
+import { binarySearchFirstItem, scrollIntoView } from "./ui_utils.js";
 import { createPromiseCapability } from "pdfjs-lib";
 import { getCharacterType } from "./pdf_find_utils.js";
-import { scrollIntoView } from "./ui_utils.js";
 
 const FindState = {
   FOUND: 0,
@@ -42,47 +42,144 @@ const CHARACTERS_TO_NORMALIZE = {
   "\u00BE": "3/4", // Vulgar fraction three quarters
 };
 
+const diacriticsRegExp = /\p{Mn}+/gu;
+const escapeRegExp = /[.*+\-?^${}()|[\]\\]/g;
+const prepareNoDiacriticsRegExp = /(\p{Mn})|(\p{L})/gu;
+const whitespacesRegExp = /\s+/g;
+const notDiacriticFromEndRegExp = /([^\p{Mn}])\p{Mn}*$/u;
+const notDiacriticFromStartRegExp = /^\p{Mn}*([^\p{Mn}])/u;
+
 let normalizationRegex = null;
 function normalize(text) {
+  // The diacritics in the text or in the query can be composed or not.
+  // So we use a decomposed text using NFD (and the same for the query)
+  // in order to be sure that diacritics are in the same order.
+
   if (!normalizationRegex) {
     // Compile the regular expression for text normalization once.
     const replace = Object.keys(CHARACTERS_TO_NORMALIZE).join("");
-    normalizationRegex = new RegExp(`[${replace}]`, "g");
+    normalizationRegex = new RegExp(
+      `([${replace}])|(-\\n)|(\\n)|(\\p{Mn}+)`,
+      "gum"
+    );
   }
-  let diffs = null;
-  const normalizedText = text.replace(normalizationRegex, function (ch, index) {
-    const normalizedCh = CHARACTERS_TO_NORMALIZE[ch],
-      diff = normalizedCh.length - ch.length;
-    if (diff !== 0) {
-      (diffs ||= []).push([index, diff]);
-    }
-    return normalizedCh;
-  });
 
-  return [normalizedText, diffs];
+  // The goal of this function is to normalize the string and
+  // be able to get from an index in the new string the
+  // corresponding index in the old string.
+  // For example if we have: abCd12ef456gh where C is replaced by ccc
+  // and numbers replaced by nothing (it's the case for diacritics), then
+  // we'll obtain the normalized string: abcccdefgh.
+  // So here the reverse map is: [0,1,2,2,2,3,6,7,11,12].
+
+  // The goal is to obtain the array: [[0, 0], [3, -1], [4, -2],
+  // [6, 0], [8, 3]].
+  // which can be used like this:
+  //  - let say that i is the index in new string and j the index
+  //    the old string.
+  //  - if i is in [0; 3[ then j = i + 0
+  //  - if i is in [3; 4[ then j = i - 1
+  //  - if i is in [4; 6[ then j = i - 2
+  //  ...
+  // Thanks to a binary search it's easy to know where is i and what's the
+  // shift.
+  // Let say that the last entry in the array is [x, s] and we have a
+  // substitution at index y (old string) which will replace o chars by n chars.
+  // Firstly, if o === n, then no need to add a new entry: the shift is
+  // the same.
+  // Secondly, if o < n, then we push the n - o elements:
+  // [y - (s - 1), s - 1], [y - (s - 2), s - 2], ...
+  // Thirdly, if o > n, then we push the element: [y - (s - n), o + s - n]
+
+  // Collect diacritics length and positions.
+  const rawDiacriticsPositions = [];
+  let m;
+  while ((m = diacriticsRegExp.exec(text)) !== null) {
+    rawDiacriticsPositions.push([m[0].length, m.index]);
+  }
+
+  let normalized = text.normalize("NFD");
+  const positions = [[0, 0]];
+  let k = 0;
+  let shift = 0;
+  let shiftOrigin = 0;
+  let eol = 0;
+  let hasDiacritics = false;
+
+  normalized = normalized.replace(
+    normalizationRegex,
+    (match, p1, p2, p3, p4, i) => {
+      i -= shiftOrigin;
+      if (p1) {
+        // Fractions...
+        const replacement = CHARACTERS_TO_NORMALIZE[match];
+        const jj = replacement.length;
+        for (let j = 1; j < jj; j++) {
+          positions.push([i - shift + j, shift - j]);
+        }
+        shift -= jj - 1;
+        return replacement;
+      }
+
+      if (p2) {
+        // "-\n" is removed because an hypen at the end of a line
+        // is likely here to mark a break in a word.
+        positions.push([i - shift, 1 + shift]);
+        shift += 1;
+        shiftOrigin += 1;
+        eol += 1;
+        return "";
+      }
+
+      if (p3) {
+        // eol is replaced by space: "foo\nbar" is likely equivalent to
+        // "foo bar".
+        positions.push([i - shift + 1, shift - 1]);
+        shift -= 1;
+        shiftOrigin += 1;
+        eol += 1;
+        return " ";
+      }
+
+      // Diacritics.
+      hasDiacritics = true;
+      let jj = match.length;
+      if (i + eol === rawDiacriticsPositions?.[k]?.[1]) {
+        jj -= rawDiacriticsPositions[k][0];
+        ++k;
+      }
+
+      for (let j = 1; j < jj + 1; j++) {
+        // i is the position of the first diacritic
+        // so (i - 1) is the position for the letter before.
+        positions.push([i - 1 - shift + j, shift - j]);
+      }
+      shift -= jj;
+      shiftOrigin += jj;
+
+      return match;
+    }
+  );
+
+  positions.push([normalized.length, shift]);
+
+  return [normalized, positions, hasDiacritics];
 }
 
-// Determine the original, non-normalized, match index such that highlighting of
-// search results is correct in the `textLayer` for strings containing e.g. "½"
-// characters; essentially "inverting" the result of the `normalize` function.
-function getOriginalIndex(matchIndex, diffs = null) {
-  if (!diffs) {
-    return matchIndex;
+function getOriginalIndex(positions, pos, len) {
+  const start = pos;
+  const end = pos + len - 1;
+  let i = binarySearchFirstItem(positions, x => x[0] >= start);
+  if (positions[i][0] > start) {
+    --i;
   }
-  let totalDiff = 0;
-  for (const [index, diff] of diffs) {
-    const currentIndex = index + totalDiff;
 
-    if (currentIndex >= matchIndex) {
-      break;
-    }
-    if (currentIndex + diff > matchIndex) {
-      totalDiff += matchIndex - currentIndex;
-      break;
-    }
-    totalDiff += diff;
+  let j = binarySearchFirstItem(positions, x => x[0] >= end, i);
+  if (positions[j][0] > end) {
+    --j;
   }
-  return matchIndex - totalDiff;
+
+  return [start + positions[i][1], len + positions[j][1] - positions[i][1]];
 }
 
 /**
@@ -247,6 +344,7 @@ class PDFFindController {
     this._extractTextPromises = [];
     this._pageContents = []; // Stores the normalized text for each page.
     this._pageDiffs = [];
+    this._hasDiacritics = [];
     this._matchesCountTotal = 0;
     this._pagesToSearch = null;
     this._pendingFindMatches = new Set();
@@ -303,191 +401,112 @@ class PDFFindController {
   }
 
   /**
-   * Helper for multi-term search that fills the `matchesWithLength` array
-   * and handles cases where one search term includes another search term (for
-   * example, "tamed tame" or "this is"). It looks for intersecting terms in
-   * the `matches` and keeps elements with a longer match length.
-   */
-  _prepareMatches(matchesWithLength, matches, matchesLength) {
-    function isSubTerm(currentIndex) {
-      const currentElem = matchesWithLength[currentIndex];
-      const nextElem = matchesWithLength[currentIndex + 1];
-
-      // Check for cases like "TAMEd TAME".
-      if (
-        currentIndex < matchesWithLength.length - 1 &&
-        currentElem.match === nextElem.match
-      ) {
-        currentElem.skipped = true;
-        return true;
-      }
-
-      // Check for cases like "thIS IS".
-      for (let i = currentIndex - 1; i >= 0; i--) {
-        const prevElem = matchesWithLength[i];
-        if (prevElem.skipped) {
-          continue;
-        }
-        if (prevElem.match + prevElem.matchLength < currentElem.match) {
-          break;
-        }
-        if (
-          prevElem.match + prevElem.matchLength >=
-          currentElem.match + currentElem.matchLength
-        ) {
-          currentElem.skipped = true;
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // Sort the array of `{ match: <match>, matchLength: <matchLength> }`
-    // objects on increasing index first and on the length otherwise.
-    matchesWithLength.sort(function (a, b) {
-      return a.match === b.match
-        ? a.matchLength - b.matchLength
-        : a.match - b.match;
-    });
-    for (let i = 0, len = matchesWithLength.length; i < len; i++) {
-      if (isSubTerm(i)) {
-        continue;
-      }
-      matches.push(matchesWithLength[i].match);
-      matchesLength.push(matchesWithLength[i].matchLength);
-    }
-  }
-
-  /**
    * Determine if the search query constitutes a "whole word", by comparing the
    * first/last character type with the preceding/following character type.
    */
   _isEntireWord(content, startIdx, length) {
-    if (startIdx > 0) {
+    let match = content.slice(0, startIdx).match(notDiacriticFromEndRegExp);
+    if (match) {
       const first = content.charCodeAt(startIdx);
-      const limit = content.charCodeAt(startIdx - 1);
-      if (getCharacterType(first) === getCharacterType(limit)) {
+      if (getCharacterType(first) === getCharacterType(match[1])) {
         return false;
       }
     }
-    const endIdx = startIdx + length - 1;
-    if (endIdx < content.length - 1) {
-      const last = content.charCodeAt(endIdx);
-      const limit = content.charCodeAt(endIdx + 1);
-      if (getCharacterType(last) === getCharacterType(limit)) {
+
+    match = content.slice(startIdx + length).match(notDiacriticFromStartRegExp);
+    if (match) {
+      const last = content.charCodeAt(startIdx + length - 1);
+      if (getCharacterType(last) === getCharacterType(match[1])) {
         return false;
       }
     }
+
     return true;
   }
 
-  _calculatePhraseMatch(query, pageIndex, pageContent, pageDiffs, entireWord) {
+  _calculateRegExpMatch(query, entireWord, pageIndex, pageContent) {
     const matches = [],
       matchesLength = [];
-    const queryLen = query.length;
 
-    let matchIdx = -queryLen;
-    while (true) {
-      matchIdx = pageContent.indexOf(query, matchIdx + queryLen);
-      if (matchIdx === -1) {
-        break;
-      }
-      if (entireWord && !this._isEntireWord(pageContent, matchIdx, queryLen)) {
+    const diffs = this._pageDiffs[pageIndex];
+    let match;
+    while ((match = query.exec(pageContent)) !== null) {
+      if (
+        entireWord &&
+        !this._isEntireWord(pageContent, match.index, match[0].length)
+      ) {
         continue;
       }
-      const originalMatchIdx = getOriginalIndex(matchIdx, pageDiffs),
-        matchEnd = matchIdx + queryLen - 1,
-        originalQueryLen =
-          getOriginalIndex(matchEnd, pageDiffs) - originalMatchIdx + 1;
 
-      matches.push(originalMatchIdx);
-      matchesLength.push(originalQueryLen);
+      const [matchPos, matchLen] = getOriginalIndex(
+        diffs,
+        match.index,
+        match[0].length
+      );
+      matches.push(matchPos);
+      matchesLength.push(matchLen);
     }
     this._pageMatches[pageIndex] = matches;
     this._pageMatchesLength[pageIndex] = matchesLength;
   }
 
-  _calculateWordMatch(query, pageIndex, pageContent, pageDiffs, entireWord) {
-    const matchesWithLength = [];
+  _convertToRegExpString(query, hasDiacritics) {
+    const { matchDiacritics } = this._state;
 
-    // Divide the query into pieces and search for text in each piece.
-    const queryArray = query.match(/\S+/g);
-    for (let i = 0, len = queryArray.length; i < len; i++) {
-      const subquery = queryArray[i];
-      const subqueryLen = subquery.length;
+    // Escape characters like *+?... to not interfer with regexp syntax.
+    query = query.replace(escapeRegExp, "\\$&");
 
-      let matchIdx = -subqueryLen;
-      while (true) {
-        matchIdx = pageContent.indexOf(subquery, matchIdx + subqueryLen);
-        if (matchIdx === -1) {
-          break;
+    if (matchDiacritics) {
+      // aX musn't match aXY.
+      query = hasDiacritics ? `${query}(?=[^\\p{Mn}])` : query;
+    } else {
+      query = query.replace(prepareNoDiacriticsRegExp, (match, p1) => {
+        if (p1) {
+          // Diacritics are removed.
+          return "";
         }
-        if (
-          entireWord &&
-          !this._isEntireWord(pageContent, matchIdx, subqueryLen)
-        ) {
-          continue;
-        }
-        const originalMatchIdx = getOriginalIndex(matchIdx, pageDiffs),
-          matchEnd = matchIdx + subqueryLen - 1,
-          originalQueryLen =
-            getOriginalIndex(matchEnd, pageDiffs) - originalMatchIdx + 1;
-
-        // Other searches do not, so we store the length.
-        matchesWithLength.push({
-          match: originalMatchIdx,
-          matchLength: originalQueryLen,
-          skipped: false,
-        });
-      }
+        // A letter has been matched and it can be followed by any diacritics
+        // in normalized text.
+        return hasDiacritics ? `${match}\\p{Mn}*` : match;
+      });
     }
 
-    // Prepare arrays for storing the matches.
-    this._pageMatchesLength[pageIndex] = [];
-    this._pageMatches[pageIndex] = [];
+    // Replace spaces by \s+ to be sure to match any spaces.
+    // We must do it after the if (matchDiacritcs) block to avoid
+    // wrong things with the "s".
+    query = query.replace(whitespacesRegExp, "\\s+");
 
-    // Sort `matchesWithLength`, remove intersecting terms and put the result
-    // into the two arrays.
-    this._prepareMatches(
-      matchesWithLength,
-      this._pageMatches[pageIndex],
-      this._pageMatchesLength[pageIndex]
-    );
+    return query;
   }
 
   _calculateMatch(pageIndex) {
-    let pageContent = this._pageContents[pageIndex];
-    const pageDiffs = this._pageDiffs[pageIndex];
     let query = this._query;
-    const { caseSensitive, entireWord, phraseSearch } = this._state;
-
     if (query.length === 0) {
       // Do nothing: the matches should be wiped out already.
       return;
     }
 
-    if (!caseSensitive) {
-      pageContent = pageContent.toLowerCase();
-      query = query.toLowerCase();
+    const { caseSensitive, entireWord, phraseSearch } = this._state;
+    const pageContent = this._pageContents[pageIndex];
+    const hasDiacritics = this._hasDiacritics[pageIndex];
+
+    const flags = caseSensitive ? "gu" : "gui";
+    if (phraseSearch) {
+      query = this._convertToRegExpString(query, hasDiacritics);
+    } else {
+      // Words are sorted in reverse order to be sure that "foobar" is matched
+      // before "foo" in case the query is "foobar foo".
+      query = query
+        .match(/\S+/g)
+        .sort()
+        .reverse()
+        .map(q => `(${this._convertToRegExpString(q, hasDiacritics)})`)
+        .join("|");
     }
 
-    if (phraseSearch) {
-      this._calculatePhraseMatch(
-        query,
-        pageIndex,
-        pageContent,
-        pageDiffs,
-        entireWord
-      );
-    } else {
-      this._calculateWordMatch(
-        query,
-        pageIndex,
-        pageContent,
-        pageDiffs,
-        entireWord
-      );
-    }
+    query = new RegExp(query, flags);
+
+    this._calculateRegExpMatch(query, entireWord, pageIndex, pageContent);
 
     // When `highlightAll` is set, ensure that the matches on previously
     // rendered (and still active) pages are correctly highlighted.
@@ -533,12 +552,17 @@ class PDFFindController {
 
               for (let j = 0, jj = textItems.length; j < jj; j++) {
                 strBuf.push(textItems[j].str);
+                if (textItems[j].hasEOL) {
+                  strBuf.push("\n");
+                }
               }
 
               // Store the normalized page content (text items) as one string.
-              [this._pageContents[i], this._pageDiffs[i]] = normalize(
-                strBuf.join("")
-              );
+              [
+                this._pageContents[i],
+                this._pageDiffs[i],
+                this._hasDiacritics[i],
+              ] = normalize(strBuf.join(""));
               extractTextCapability.resolve(i);
             },
             reason => {
@@ -549,6 +573,7 @@ class PDFFindController {
               // Page error -- assuming no text content.
               this._pageContents[i] = "";
               this._pageDiffs[i] = null;
+              this._hasDiacritics[i] = false;
               extractTextCapability.resolve(i);
             }
           );

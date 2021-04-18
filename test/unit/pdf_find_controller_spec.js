@@ -271,5 +271,130 @@ describe("pdf_find_controller", function () {
       pageMatches: [[19, 48, 66]],
       pageMatchesLength: [[8, 8, 8]],
     });
+
+    await testSearch({
+      eventBus,
+      pdfFindController,
+      parameters: {
+        query: "1/2",
+        caseSensitive: false,
+        entireWord: false,
+        phraseSearch: true,
+        findPrevious: false,
+      },
+      matchesPerPage: [2],
+      selectedMatch: {
+        pageIndex: 0,
+        matchIndex: 0,
+      },
+      pageMatches: [[28, 57]],
+      pageMatchesLength: [[1, 1]],
+    });
+
+    await testSearch({
+      eventBus,
+      pdfFindController,
+      parameters: {
+        query: "½",
+        caseSensitive: false,
+        entireWord: false,
+        phraseSearch: true,
+        findPrevious: false,
+      },
+      matchesPerPage: [2],
+      selectedMatch: {
+        pageIndex: 0,
+        matchIndex: 0,
+      },
+      pageMatches: [[28, 57]],
+      pageMatchesLength: [[1, 1]],
+    });
+  });
+
+  it("performs a normal search, where the text with diacritics is normalized", async function () {
+    const { eventBus, pdfFindController } = await initPdfFindController(
+      "french_diacritics.pdf"
+    );
+
+    await testSearch({
+      eventBus,
+      pdfFindController,
+      parameters: {
+        query: "a",
+        caseSensitive: false,
+        entireWord: false,
+        phraseSearch: true,
+        findPrevious: false,
+        matchDiacritics: false,
+      },
+      matchesPerPage: [6],
+      selectedMatch: {
+        pageIndex: 0,
+        matchIndex: 0,
+      },
+      pageMatches: [[0, 2, 4, 6, 8, 10]],
+      pageMatchesLength: [[1, 1, 1, 1, 1, 1]],
+    });
+
+    await testSearch({
+      eventBus,
+      pdfFindController,
+      parameters: {
+        query: "u",
+        caseSensitive: false,
+        entireWord: false,
+        phraseSearch: true,
+        findPrevious: false,
+        matchDiacritics: false,
+      },
+      matchesPerPage: [6],
+      selectedMatch: {
+        pageIndex: 0,
+        matchIndex: 0,
+      },
+      pageMatches: [[44, 46, 48, 50, 52, 54]],
+      pageMatchesLength: [[1, 1, 1, 1, 1, 1]],
+    });
+
+    await testSearch({
+      eventBus,
+      pdfFindController,
+      parameters: {
+        query: "ë",
+        caseSensitive: false,
+        entireWord: false,
+        phraseSearch: true,
+        findPrevious: false,
+        matchDiacritics: true,
+      },
+      matchesPerPage: [2],
+      selectedMatch: {
+        pageIndex: 0,
+        matchIndex: 0,
+      },
+      pageMatches: [[28, 30]],
+      pageMatchesLength: [[1, 1]],
+    });
+  });
+
+  it("performs a search where one of the results contains an hyphen", async function () {
+    const { eventBus, pdfFindController } = await initPdfFindController();
+
+    await testSearch({
+      eventBus,
+      pdfFindController,
+      parameters: {
+        query: "optimiz",
+        caseSensitive: false,
+        entireWord: false,
+        phraseSearch: true,
+        findPrevious: false,
+      },
+      matchesPerPage: [1, 4, 2, 3, 3, 0, 2, 9, 1, 0, 0, 6, 3, 4],
+      selectedMatch: {
+        pageIndex: 0,
+        matchIndex: 0,
+      },
+    });
   });
 });
