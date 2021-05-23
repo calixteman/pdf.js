@@ -2884,7 +2884,7 @@ class Font {
   /**
    * @private
    */
-  _charToGlyph(charcode, isSpace = false) {
+  _charToGlyph(charcode, isSpace) {
     let fontCharCode, width, operatorListId;
 
     let widthCode = charcode;

@@ -436,6 +436,7 @@ class Page {
         includeMarkedContent,
         combineTextItems,
         sink,
+        rotate: this.rotate,
       });
     });
   }
