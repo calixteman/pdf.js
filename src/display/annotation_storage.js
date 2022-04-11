@@ -50,16 +50,8 @@ class AnnotationStorage {
     return Object.assign(defaultValue, value);
   }
 
-  /**
-   * Get the value for a given key.
-   *
-   * @public
-   * @memberof AnnotationStorage
-   * @param {string} key
-   * @returns {Object}
-   */
-  getRawValue(key) {
-    return this._storage.get(key);
+  removeKey(key) {
+    this._storage.delete(key);
   }
 
   /**
@@ -123,7 +115,19 @@ class AnnotationStorage {
    * @ignore
    */
   get serializable() {
-    return this._storage.size > 0 ? this._storage : null;
+    if (this._storage.size === 0) {
+      return null;
+    }
+
+    const clone = new Map();
+    for (const [key, value] of this._storage) {
+      if ("serialize" in value) {
+        clone.set(key, value.serialize());
+      } else {
+        clone.set(key, value);
+      }
+    }
+    return clone;
   }
 
   /**

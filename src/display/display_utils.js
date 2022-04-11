@@ -241,6 +241,7 @@ class PageViewport {
       offsetCanvasX - rotateA * scale * centerX - rotateC * scale * centerY,
       offsetCanvasY - rotateB * scale * centerX - rotateD * scale * centerY,
     ];
+    this.inverseTransform = Util.inverseTransform(this.transform);
 
     this.width = width;
     this.height = height;

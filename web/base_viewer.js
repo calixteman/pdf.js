@@ -61,6 +61,7 @@ import {
   VERTICAL_PADDING,
   watchScroll,
 } from "./ui_utils.js";
+import { AnnotationEditorLayerBuilder } from "./annotation_editor_layer_builder.js";
 import { AnnotationLayerBuilder } from "./annotation_layer_builder.js";
 import { NullL10n } from "./l10n_utils.js";
 import { PDFPageView } from "./pdf_page_view.js";
@@ -194,6 +195,7 @@ class PDFPageViewBuffer {
  * Simple viewer control to display PDF content/pages.
  *
  * @implements {IPDFAnnotationLayerFactory}
+ * @implements {IPDFAnnotationEditorLayerFactory}
  * @implements {IPDFStructTreeLayerFactory}
  * @implements {IPDFTextLayerFactory}
  * @implements {IPDFXfaLayerFactory}
@@ -699,6 +701,7 @@ class BaseViewer {
         const annotationLayerFactory =
           this.#annotationMode !== AnnotationMode.DISABLE ? this : null;
         const xfaLayerFactory = isPureXfa ? this : null;
+        const annotationEditorLayerFactory = this;
 
         for (let pageNum = 1; pageNum <= pagesCount; ++pageNum) {
           const pageView = new PDFPageView({
@@ -714,6 +717,7 @@ class BaseViewer {
             annotationLayerFactory,
             annotationMode: this.#annotationMode,
             xfaLayerFactory,
+            annotationEditorLayerFactory,
             textHighlighterFactory: this,
             structTreeLayerFactory: this,
             imageResourcesPath: this.imageResourcesPath,
@@ -1653,6 +1657,27 @@ class BaseViewer {
         fieldObjectsPromise || this.pdfDocument?.getFieldObjects(),
       mouseState: mouseState || this._scriptingManager?.mouseState,
       annotationCanvasMap,
+    });
+  }
+
+  /**
+   * @param {HTMLDivElement} pageDiv
+   * @param {PDFPageProxy} pdfPage
+   * @param {AnnotationStorage} [annotationStorage] - Storage for annotation
+   *   data in forms.
+   * @returns {AnnotationEditorLayerBuilder}
+   */
+  createAnnotationEditorLayerBuilder(
+    pageDiv,
+    pdfPage,
+    annotationStorage = null
+  ) {
+    return new AnnotationEditorLayerBuilder({
+      pageDiv,
+      pdfPage,
+      annotationStorage:
+        annotationStorage || this.pdfDocument?.annotationStorage,
+      linkService: this.linkService,
     });
   }
 

@@ -557,6 +557,19 @@ class WorkerMessageHandler {
       function ({ isPureXfa, numPages, annotationStorage, filename }) {
         pdfManager.requestLoadedStream();
 
+        const newAnnotationsByPage = new Map();
+        for (const [key, value] of annotationStorage) {
+          if (!key.startsWith("editor")) {
+            continue;
+          }
+          let annotations = newAnnotationsByPage.get(value.pageIndex);
+          if (!annotations) {
+            annotations = [];
+            newAnnotationsByPage.set(value.pageIndex, annotations);
+          }
+          annotations.push(value);
+        }
+
         const promises = [
           pdfManager.onLoadedStream(),
           pdfManager.ensureCatalog("acroForm"),
@@ -564,6 +577,19 @@ class WorkerMessageHandler {
           pdfManager.ensureDoc("xref"),
           pdfManager.ensureDoc("startXRef"),
         ];
+
+        for (const [pageIndex, annotations] of newAnnotationsByPage) {
+          promises.push(
+            pdfManager.getPage(pageIndex).then(page => {
+              const task = new WorkerTask(`Save (editor): page ${pageIndex}`);
+              return page
+                .saveNewAnnotations(handler, task, annotations)
+                .finally(function () {
+                  finishWorkerTask(task);
+                });
+            })
+          );
+        }
 
         if (isPureXfa) {
           promises.push(pdfManager.serializeXfaData(annotationStorage));

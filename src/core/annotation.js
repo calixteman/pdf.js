@@ -30,6 +30,7 @@ import {
   shadow,
   stringToPDFString,
   stringToUTF16BEString,
+  stringToUTF8String,
   unreachable,
   Util,
   warn,
@@ -45,6 +46,7 @@ import {
   parseDefaultAppearance,
 } from "./default_appearance.js";
 import { Dict, isName, Name, Ref, RefSet } from "./primitives.js";
+import { writeDict, writeObject } from "./writer.js";
 import { BaseStream } from "./base_stream.js";
 import { bidi } from "./bidi.js";
 import { Catalog } from "./catalog.js";
@@ -53,7 +55,6 @@ import { FileSpec } from "./file_spec.js";
 import { ObjectLoader } from "./object_loader.js";
 import { OperatorList } from "./operator_list.js";
 import { StringStream } from "./stream.js";
-import { writeDict } from "./writer.js";
 import { XFAFactory } from "./xfa/factory.js";
 
 class AnnotationFactory {
@@ -236,6 +237,60 @@ class AnnotationFactory {
       warn(`_getPageIndex: "${ex}".`);
       return -1;
     }
+  }
+
+  static async saveNewAnnotations(evaluator, task, annotations) {
+    const xref = evaluator.xref;
+    let baseFontRef;
+    const results = [];
+    const others = [];
+    const promises = [];
+    for (const annotation of annotations) {
+      switch (annotation.type) {
+        case "FreeText":
+          if (!baseFontRef) {
+            const baseFont = new Dict(xref);
+            baseFont.set("BaseFont", Name.get("Helvetica"));
+            baseFont.set("Type", Name.get("Font"));
+            baseFont.set("Subtype", Name.get("Type1"));
+            baseFont.set("Encoding", Name.get("WinAnsiEncoding"));
+            const buffer = [];
+            baseFontRef = xref.getNewRef();
+            writeObject(baseFontRef, baseFont, buffer, null);
+            others.push({ ref: baseFontRef, data: buffer.join("") });
+          }
+          promises.push(
+            FreeTextAnnotation.createNewAnnotation(
+              xref,
+              evaluator,
+              task,
+              annotation,
+              baseFontRef,
+              results,
+              others
+            )
+          );
+          break;
+        case "Ink":
+          promises.push(
+            InkAnnotation.createNewAnnotation(
+              xref,
+              evaluator,
+              task,
+              annotation,
+              results,
+              others
+            )
+          );
+      }
+    }
+
+    await Promise.all(promises);
+
+    return {
+      annotations: results,
+      others,
+    };
   }
 }
 
@@ -1617,7 +1672,11 @@ class WidgetAnnotation extends Annotation {
       );
     }
 
-    const font = await this._getFontData(evaluator, task);
+    const font = await this._getFontData(
+      evaluator,
+      task,
+      this.data.defaultAppearanceData
+    );
     const [defaultAppearance, fontSize] = this._computeFontSize(
       totalHeight - defaultPadding,
       totalWidth - 2 * hPadding,
@@ -1700,7 +1759,7 @@ class WidgetAnnotation extends Annotation {
     );
   }
 
-  async _getFontData(evaluator, task) {
+  static async _getFontData(evaluator, task, appearanceData, resources) {
     const operatorList = new OperatorList();
     const initialState = {
       font: null,
@@ -1709,9 +1768,9 @@ class WidgetAnnotation extends Annotation {
       },
     };
 
-    const { fontName, fontSize } = this.data.defaultAppearanceData;
+    const { fontName, fontSize } = appearanceData;
     await evaluator.handleSetFont(
-      this._fieldResources.mergedResources,
+      resources,
       [fontName && Name.get(fontName), fontSize],
       /* fontRef = */ null,
       operatorList,
@@ -1808,7 +1867,15 @@ class WidgetAnnotation extends Annotation {
     return [this._defaultAppearance, fontSize];
   }
 
-  _renderText(text, font, fontSize, totalWidth, alignment, hPadding, vPadding) {
+  static _renderText(
+    text,
+    font,
+    fontSize,
+    totalWidth,
+    alignment,
+    hPadding,
+    vPadding
+  ) {
     let shift;
     if (alignment === 1) {
       // Center
@@ -1939,7 +2006,7 @@ class TextWidgetAnnotation extends WidgetAnnotation {
     );
   }
 
-  _getMultilineAppearance(
+  static _getMultilineAppearance(
     defaultAppearance,
     text,
     font,
@@ -1984,7 +2051,7 @@ class TextWidgetAnnotation extends WidgetAnnotation {
     );
   }
 
-  _splitLine(line, font, fontSize, width, cache = {}) {
+  static _splitLine(line, font, fontSize, width, cache = {}) {
     // TODO: need to handle chars which are not in the font.
     line = cache.line || font.encodeString(line).join("");
 
@@ -2640,7 +2707,12 @@ class ChoiceWidgetAnnotation extends WidgetAnnotation {
       );
     }
 
-    const font = await this._getFontData(evaluator, task);
+    const font = await this._getFontData(
+      evaluator,
+      task,
+      this.data.defaultAppearanceData,
+      this._fieldResources.mergedResources
+    );
 
     let defaultAppearance;
     let { fontSize } = this.data.defaultAppearanceData;
@@ -2870,6 +2942,126 @@ class FreeTextAnnotation extends MarkupAnnotation {
     super(parameters);
 
     this.data.annotationType = AnnotationType.FREETEXT;
+  }
+
+  static async createNewAnnotation(
+    xref,
+    evaluator,
+    task,
+    annotation,
+    baseFontRef,
+    results,
+    others
+  ) {
+    const fontSize = annotation.fontSize;
+    const freetextRef = xref.getNewRef();
+    const freetext = new Dict(xref);
+    freetext.set("Type", Name.get("Annot"));
+    freetext.set("Subtype", Name.get("FreeText"));
+    freetext.set("CreationDate", `D:${getModificationDate()}`);
+    freetext.set("Rect", annotation.rect);
+    const da = `/Helv ${fontSize} Tf 0 g`;
+    freetext.set("DA", da);
+    freetext.set("Contents", annotation.value);
+    freetext.set("F", 4);
+    freetext.set("Border", [0, 0, 0]);
+    freetext.set("Rotate", 0);
+
+    if (annotation.user) {
+      freetext.set("T", stringToUTF8String(annotation.user));
+    }
+
+    const resources = new Dict(xref);
+    const font = new Dict(xref);
+    font.set("Helv", baseFontRef);
+    resources.set("Font", font);
+
+    const helv = await TextWidgetAnnotation._getFontData(
+      evaluator,
+      task,
+      {
+        fontName: "Helvetica",
+        fontSize,
+      },
+      resources
+    );
+
+    const [x1, y1, x2, y2] = annotation.rect;
+    const w = x2 - x1;
+    const h = y2 - y1;
+
+    const lines = annotation.value.split("\n");
+    const scale = fontSize / 1000;
+    let totalWidth = -Infinity;
+    const encodedLines = [];
+    for (let line of lines) {
+      line = helv.encodeString(line).join("");
+      encodedLines.push(line);
+      let lineWidth = 0;
+      const glyphs = helv.charsToGlyphs(line);
+      for (const glyph of glyphs) {
+        lineWidth += glyph.width * scale;
+      }
+      totalWidth = Math.max(totalWidth, lineWidth);
+    }
+
+    let hscale = 1;
+    totalWidth += 2;
+    if (totalWidth > w) {
+      hscale = w / totalWidth;
+    }
+    let vscale = 1;
+    const totalHeight = 1.2 * fontSize * lines.length;
+    if (totalHeight > h) {
+      vscale = h / totalHeight;
+    }
+    const fscale = Math.min(hscale, vscale);
+    const newFontSize = fontSize * fscale;
+    const buffer = [
+      "q",
+      `0 0 ${w.toFixed(2)} ${h.toFixed(2)} re W n`,
+      `BT`,
+      `1 0 0 1 2 ${h.toFixed(2)} Tm 0 Tc 0 g`,
+      `/Helv ${newFontSize} Tf`,
+    ];
+
+    const vShift = (-1.2 * newFontSize).toFixed(2);
+    for (const line of encodedLines) {
+      buffer.push(`0 ${vShift} Td (${escapeString(line)}) Tj`);
+    }
+    buffer.push("ET", "Q");
+    const appearance = buffer.join("\n");
+
+    const appearanceStreamDict = new Dict(xref);
+    appearanceStreamDict.set("FormType", 1);
+    appearanceStreamDict.set("Subtype", Name.get("Form"));
+    appearanceStreamDict.set("Type", Name.get("XObject"));
+    appearanceStreamDict.set("BBox", [0, 0, w, h]);
+    appearanceStreamDict.set("Length", appearance.length);
+    appearanceStreamDict.set("Resources", resources);
+
+    const ap = new StringStream(appearance);
+    ap.dict = appearanceStreamDict;
+
+    buffer.length = 0;
+    const apRef = xref.getNewRef();
+    let transform = xref.encrypt
+      ? xref.encrypt.createCipherTransform(apRef.num, apRef.gen)
+      : null;
+    writeObject(apRef, ap, buffer, transform);
+    others.push({ ref: apRef, data: buffer.join("") });
+
+    const n = new Dict(xref);
+    n.set("N", apRef);
+    freetext.set("AP", n);
+
+    buffer.length = 0;
+    transform = xref.encrypt
+      ? xref.encrypt.createCipherTransform(freetextRef.num, freetextRef.gen)
+      : null;
+    writeObject(freetextRef, freetext, buffer, transform);
+
+    results.push({ ref: freetextRef, data: buffer.join("") });
   }
 }
 
@@ -3231,6 +3423,87 @@ class InkAnnotation extends MarkupAnnotation {
         },
       });
     }
+  }
+
+  static async createNewAnnotation(
+    xref,
+    evaluator,
+    task,
+    annotation,
+    results,
+    others
+  ) {
+    const inkRef = xref.getNewRef();
+    const ink = new Dict(xref);
+    ink.set("Type", Name.get("Annot"));
+    ink.set("Subtype", Name.get("Ink"));
+    ink.set("CreationDate", `D:${getModificationDate()}`);
+    ink.set("Rect", annotation.rect);
+    ink.set(
+      "InkList",
+      annotation.paths.map(p => p.points)
+    );
+    ink.set("F", 4);
+    ink.set("Border", [0, 0, 0]);
+    ink.set("Rotate", 0);
+
+    // const resources = new Dict(xref);
+
+    const [x1, y1, x2, y2] = annotation.rect;
+    const w = x2 - x1;
+    const h = y2 - y1;
+
+    const appearanceBuffer = [
+      `${annotation.thickness} w`,
+      `${getPdfColor(annotation.color)}`,
+    ];
+    const buffer = [];
+    for (const { bezier } of annotation.paths) {
+      buffer.length = 0;
+      buffer.push(
+        `${numberToString(bezier[0])} ${numberToString(bezier[1])} m`
+      );
+      for (let i = 2, ii = bezier.length; i < ii; i += 6) {
+        const curve = bezier
+          .slice(i, i + 6)
+          .map(numberToString)
+          .join(" ");
+        buffer.push(`${curve} c`);
+      }
+      buffer.push("S");
+      appearanceBuffer.push(buffer.join("\n"));
+    }
+    const appearance = appearanceBuffer.join("\n");
+
+    const appearanceStreamDict = new Dict(xref);
+    appearanceStreamDict.set("FormType", 1);
+    appearanceStreamDict.set("Subtype", Name.get("Form"));
+    appearanceStreamDict.set("Type", Name.get("XObject"));
+    appearanceStreamDict.set("BBox", [0, 0, w, h]);
+    appearanceStreamDict.set("Length", appearance.length);
+
+    const ap = new StringStream(appearance);
+    ap.dict = appearanceStreamDict;
+
+    buffer.length = 0;
+    const apRef = xref.getNewRef();
+    let transform = xref.encrypt
+      ? xref.encrypt.createCipherTransform(apRef.num, apRef.gen)
+      : null;
+    writeObject(apRef, ap, buffer, transform);
+    others.push({ ref: apRef, data: buffer.join("") });
+
+    const n = new Dict(xref);
+    n.set("N", apRef);
+    ink.set("AP", n);
+
+    buffer.length = 0;
+    transform = xref.encrypt
+      ? xref.encrypt.createCipherTransform(inkRef.num, inkRef.gen)
+      : null;
+    writeObject(inkRef, ink, buffer, transform);
+
+    results.push({ ref: inkRef, data: buffer.join("") });
   }
 }
 

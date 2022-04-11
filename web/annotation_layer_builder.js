@@ -93,7 +93,7 @@ class AnnotationLayerBuilder {
         this._fieldObjectsPromise,
       ]);
 
-    if (this._cancelled || annotations.length === 0) {
+    if (this._cancelled) {
       return;
     }
 

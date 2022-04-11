@@ -56,6 +56,7 @@ import {
 } from "pdfjs-lib";
 import { CursorTool, PDFCursorTools } from "./pdf_cursor_tools.js";
 import { LinkTarget, PDFLinkService } from "./pdf_link_service.js";
+import { AnnotationEditorLayerBuilder } from "./annotation_editor_layer_builder.js";
 import { OverlayManager } from "./overlay_manager.js";
 import { PasswordPrompt } from "./password_prompt.js";
 import { PDFAttachmentViewer } from "./pdf_attachment_viewer.js";
@@ -1851,6 +1852,18 @@ const PDFViewerApplication = {
     this.pdfPresentationMode?.request();
   },
 
+  requestFreeTextMode() {
+    AnnotationEditorLayerBuilder.setEditorType("FreeText");
+    this.appConfig.toolbar.freeTextModeButton.classList.toggle("toggled");
+    this.appConfig.toolbar.inkModeButton.classList.remove("toggled");
+  },
+
+  requestInkMode() {
+    AnnotationEditorLayerBuilder.setEditorType("Ink");
+    this.appConfig.toolbar.inkModeButton.classList.toggle("toggled");
+    this.appConfig.toolbar.freeTextModeButton.classList.remove("toggled");
+  },
+
   triggerPrinting() {
     if (!this.supportsPrinting) {
       return;
@@ -1878,6 +1891,8 @@ const PDFViewerApplication = {
     eventBus._on("namedaction", webViewerNamedAction);
     eventBus._on("presentationmodechanged", webViewerPresentationModeChanged);
     eventBus._on("presentationmode", webViewerPresentationMode);
+    eventBus._on("freetextmode", webViewerFreeTextMode);
+    eventBus._on("inkmode", webViewerInkMode);
     eventBus._on("print", webViewerPrint);
     eventBus._on("download", webViewerDownload);
     eventBus._on("firstpage", webViewerFirstPage);
@@ -2458,6 +2473,12 @@ if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
 
 function webViewerPresentationMode() {
   PDFViewerApplication.requestPresentationMode();
+}
+function webViewerFreeTextMode() {
+  PDFViewerApplication.requestFreeTextMode();
+}
+function webViewerInkMode() {
+  PDFViewerApplication.requestInkMode();
 }
 function webViewerPrint() {
   PDFViewerApplication.triggerPrinting();

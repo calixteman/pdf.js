@@ -58,6 +58,11 @@ const defaultOptions = {
     value: 2,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
+  annotationEditionMode: {
+    /** @type {boolean} */
+    value: true,
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+  },
   cursorToolOnLoad: {
     /** @type {number} */
     value: 0,

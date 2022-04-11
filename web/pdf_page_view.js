@@ -22,6 +22,8 @@
 // eslint-disable-next-line max-len
 /** @typedef {import("./interfaces").IPDFAnnotationLayerFactory} IPDFAnnotationLayerFactory */
 // eslint-disable-next-line max-len
+/** @typedef {import("./interfaces").IPDFAnnotationEditorLayerFactory} IPDFAnnotationEditorLayerFactory */
+// eslint-disable-next-line max-len
 /** @typedef {import("./interfaces").IPDFStructTreeLayerFactory} IPDFStructTreeLayerFactory */
 // eslint-disable-next-line max-len
 /** @typedef {import("./interfaces").IPDFTextLayerFactory} IPDFTextLayerFactory */
@@ -72,6 +74,7 @@ import { NullL10n } from "./l10n_utils.js";
  *   see also {@link RenderParameters} and {@link GetOperatorListParameters}.
  *   The default value is `AnnotationMode.ENABLE_FORMS`.
  * @property {IPDFAnnotationLayerFactory} annotationLayerFactory
+ * @property {IPDFAnnotationEditorLayerFactory} annotationEditorLayerFactory
  * @property {IPDFXfaLayerFactory} xfaLayerFactory
  * @property {IPDFStructTreeLayerFactory} structTreeLayerFactory
  * @property {Object} [textHighlighterFactory]
@@ -96,6 +99,7 @@ const MAX_CANVAS_PIXELS = compatibilityParams.maxCanvasPixels || 16777216;
  */
 class PDFPageView {
   #annotationMode = AnnotationMode.ENABLE_FORMS;
+  // #annotationEditionMode;
 
   /**
    * @param {PDFPageViewOptions} options
@@ -119,6 +123,7 @@ class PDFPageView {
     this.textLayerMode = options.textLayerMode ?? TextLayerMode.ENABLE;
     this.#annotationMode =
       options.annotationMode ?? AnnotationMode.ENABLE_FORMS;
+    // this.#annotationEditionMode = options.annotationEditionMode ?? false;
     this.imageResourcesPath = options.imageResourcesPath || "";
     this.useOnlyCssZoom = options.useOnlyCssZoom || false;
     this.maxCanvasPixels = options.maxCanvasPixels || MAX_CANVAS_PIXELS;
@@ -128,6 +133,7 @@ class PDFPageView {
     this.renderingQueue = options.renderingQueue;
     this.textLayerFactory = options.textLayerFactory;
     this.annotationLayerFactory = options.annotationLayerFactory;
+    this.annotationEditorLayerFactory = options.annotationEditorLayerFactory;
     this.xfaLayerFactory = options.xfaLayerFactory;
     this.textHighlighter =
       options.textHighlighterFactory?.createTextHighlighter(
@@ -148,6 +154,7 @@ class PDFPageView {
     this._annotationCanvasMap = null;
 
     this.annotationLayer = null;
+    this.annotationEditorLayer = null;
     this.textLayer = null;
     this.zoomLayer = null;
     this.xfaLayer = null;
@@ -197,6 +204,24 @@ class PDFPageView {
       error = ex;
     } finally {
       this.eventBus.dispatch("annotationlayerrendered", {
+        source: this,
+        pageNumber: this.id,
+        error,
+      });
+    }
+  }
+
+  /**
+   * @private
+   */
+  async _renderAnnotationEditorLayer() {
+    let error = null;
+    try {
+      await this.annotationEditorLayer.render(this.viewport, "display");
+    } catch (ex) {
+      error = ex;
+    } finally {
+      this.eventBus.dispatch("annotationeditorlayerrendered", {
         source: this,
         pageNumber: this.id,
         error,
@@ -259,9 +284,14 @@ class PDFPageView {
   reset({
     keepZoomLayer = false,
     keepAnnotationLayer = false,
+    keepAnnotationEditorLayer = false,
     keepXfaLayer = false,
   } = {}) {
-    this.cancelRendering({ keepAnnotationLayer, keepXfaLayer });
+    this.cancelRendering({
+      keepAnnotationLayer,
+      keepAnnotationEditorLayer,
+      keepXfaLayer,
+    });
     this.renderingState = RenderingStates.INITIAL;
 
     const div = this.div;
@@ -272,12 +302,15 @@ class PDFPageView {
       zoomLayerNode = (keepZoomLayer && this.zoomLayer) || null,
       annotationLayerNode =
         (keepAnnotationLayer && this.annotationLayer?.div) || null,
+      annotationEditorLayerNode =
+        (keepAnnotationEditorLayer && this.annotationEditorLayer?.div) || null,
       xfaLayerNode = (keepXfaLayer && this.xfaLayer?.div) || null;
     for (let i = childNodes.length - 1; i >= 0; i--) {
       const node = childNodes[i];
       switch (node) {
         case zoomLayerNode:
         case annotationLayerNode:
+        case annotationEditorLayerNode:
         case xfaLayerNode:
           continue;
       }
@@ -289,6 +322,12 @@ class PDFPageView {
       // Hide the annotation layer until all elements are resized
       // so they are not displayed on the already resized page.
       this.annotationLayer.hide();
+    }
+
+    if (annotationEditorLayerNode) {
+      this.annotationEditorLayer.hide();
+    } else {
+      this.annotationEditorLayer?.destroy();
     }
     if (xfaLayerNode) {
       // Hide the XFA layer until all elements are resized
@@ -347,6 +386,7 @@ class PDFPageView {
       this.cssTransform({
         target: this.svg,
         redrawAnnotationLayer: true,
+        redrawAnnotationEditorLayer: true,
         redrawXfaLayer: true,
       });
 
@@ -380,6 +420,7 @@ class PDFPageView {
         this.cssTransform({
           target: this.canvas,
           redrawAnnotationLayer: true,
+          redrawAnnotationEditorLayer: true,
           redrawXfaLayer: true,
         });
 
@@ -403,6 +444,7 @@ class PDFPageView {
     this.reset({
       keepZoomLayer: true,
       keepAnnotationLayer: true,
+      keepAnnotationEditorLayer: true,
       keepXfaLayer: true,
     });
   }
@@ -411,7 +453,11 @@ class PDFPageView {
    * PLEASE NOTE: Most likely you want to use the `this.reset()` method,
    *              rather than calling this one directly.
    */
-  cancelRendering({ keepAnnotationLayer = false, keepXfaLayer = false } = {}) {
+  cancelRendering({
+    keepAnnotationLayer = false,
+    keepAnnotationEditorLayer = false,
+    keepXfaLayer = false,
+  } = {}) {
     if (this.paintTask) {
       this.paintTask.cancel();
       this.paintTask = null;
@@ -430,6 +476,13 @@ class PDFPageView {
       this.annotationLayer = null;
       this._annotationCanvasMap = null;
     }
+    if (
+      this.annotationEditorLayer &&
+      (!keepAnnotationEditorLayer || !this.annotationEditorLayer.div)
+    ) {
+      this.annotationEditorLayer.cancel();
+      this.annotationEditorLayer = null;
+    }
     if (this.xfaLayer && (!keepXfaLayer || !this.xfaLayer.div)) {
       this.xfaLayer.cancel();
       this.xfaLayer = null;
@@ -444,6 +497,7 @@ class PDFPageView {
   cssTransform({
     target,
     redrawAnnotationLayer = false,
+    redrawAnnotationEditorLayer = false,
     redrawXfaLayer = false,
   }) {
     // Scale target (canvas or svg), its wrapper and page container.
@@ -516,6 +570,9 @@ class PDFPageView {
 
     if (redrawAnnotationLayer && this.annotationLayer) {
       this._renderAnnotationLayer();
+    }
+    if (redrawAnnotationEditorLayer && this.annotationEditorLayer) {
+      this._renderAnnotationEditorLayer();
     }
     if (redrawXfaLayer && this.xfaLayer) {
       this._renderXfaLayer();
@@ -693,7 +750,19 @@ class PDFPageView {
           }
 
           if (this.annotationLayer) {
-            this._renderAnnotationLayer();
+            this._renderAnnotationLayer().then(() => {
+              if (this.annotationEditorLayerFactory) {
+                if (!this.annotationEditorLayer) {
+                  this.annotationEditorLayer =
+                    this.annotationEditorLayerFactory.createAnnotationEditorLayerBuilder(
+                      div,
+                      pdfPage,
+                      /* annotationStorage = */ null
+                    );
+                }
+                this._renderAnnotationEditorLayer();
+              }
+            });
           }
         });
       },

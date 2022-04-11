@@ -21,7 +21,6 @@ import {
   Util,
   warn,
 } from "../shared/util.js";
-import { isNodeJS } from "../shared/is_node.js";
 
 const PathType = {
   FILL: "Fill",
@@ -30,7 +29,7 @@ const PathType = {
 };
 
 function applyBoundingBox(ctx, bbox) {
-  if (!bbox || isNodeJS) {
+  if (!bbox || typeof Path2D === "undefined") {
     return;
   }
   const width = bbox[2] - bbox[0];
@@ -108,11 +107,14 @@ class RadialAxialShadingPattern extends BaseShadingPattern {
         "pattern",
         width,
         height,
-        true
+        /* trackTransform */ true,
+        /* allowOffscreen */ true
       );
 
       const tmpCtx = tmpCanvas.context;
-      tmpCtx.clearRect(0, 0, tmpCtx.canvas.width, tmpCtx.canvas.height);
+      if (!tmpCanvas.isOffscreen) {
+        tmpCtx.clearRect(0, 0, tmpCtx.canvas.width, tmpCtx.canvas.height);
+      }
       tmpCtx.beginPath();
       tmpCtx.rect(0, 0, tmpCtx.canvas.width, tmpCtx.canvas.height);
       // Non shading fill patterns are positioned relative to the base transform
@@ -137,7 +139,14 @@ class RadialAxialShadingPattern extends BaseShadingPattern {
       tmpCtx.fillStyle = this._createGradient(tmpCtx);
       tmpCtx.fill();
 
-      pattern = ctx.createPattern(tmpCanvas.canvas, "no-repeat");
+      if (tmpCanvas.isOffscreen) {
+        const bitmap = tmpCanvas.canvas.transferToImageBitmap();
+        pattern = ctx.createPattern(bitmap, "no-repeat");
+        bitmap.close();
+      } else {
+        pattern = ctx.createPattern(tmpCanvas.canvas, "no-repeat");
+      }
+
       const domMatrix = new DOMMatrix(inverse);
       try {
         pattern.setTransform(domMatrix);
@@ -376,7 +385,8 @@ class MeshShadingPattern extends BaseShadingPattern {
       "mesh",
       paddedWidth,
       paddedHeight,
-      false
+      /* trackTransform */ false,
+      /* allowOffscreen */ true
     );
     const tmpCtx = tmpCanvas.context;
 
@@ -394,10 +404,13 @@ class MeshShadingPattern extends BaseShadingPattern {
       drawFigure(data, figure, context);
     }
     tmpCtx.putImageData(data, BORDER_SIZE, BORDER_SIZE);
-    const canvas = tmpCanvas.canvas;
+    const bitmap = tmpCanvas.isOffscreen
+      ? tmpCanvas.canvas.transferToImageBitmap()
+      : tmpCanvas.canvas;
 
     return {
-      canvas,
+      bitmap,
+      isOffscreen: tmpCanvas.isOffscreen,
       offsetX: offsetX - BORDER_SIZE * scaleX,
       offsetY: offsetY - BORDER_SIZE * scaleY,
       scaleX,
@@ -440,7 +453,15 @@ class MeshShadingPattern extends BaseShadingPattern {
     );
     ctx.scale(temporaryPatternCanvas.scaleX, temporaryPatternCanvas.scaleY);
 
-    return ctx.createPattern(temporaryPatternCanvas.canvas, "no-repeat");
+    const pattern = ctx.createPattern(
+      temporaryPatternCanvas.bitmap,
+      "no-repeat"
+    );
+    if (temporaryPatternCanvas.isOffscreen) {
+      temporaryPatternCanvas.bitmap.close();
+    }
+
+    return pattern;
   }
 }
 
@@ -487,11 +508,9 @@ class TilingPattern {
     this.baseTransform = baseTransform;
   }
 
-  createPatternCanvas(owner) {
+  createPatternCanvas(owner, pathType) {
     const operatorList = this.operatorList;
     const bbox = this.bbox;
-    const xstep = this.xstep;
-    const ystep = this.ystep;
     const paintType = this.paintType;
     const tilingType = this.tilingType;
     const color = this.color;
@@ -519,40 +538,56 @@ class TilingPattern {
     //   TODO: Fix the implementation, to allow this scenario to be painted
     //   correctly.
 
-    const x0 = bbox[0],
-      y0 = bbox[1],
-      x1 = bbox[2],
-      y1 = bbox[3];
+    const [x0, y0, x1, y1] = bbox;
+    const currentTransform = owner.ctx.mozCurrentTransform;
+    const ownerPathBBox = owner.current.getPathBoundingBox(
+      pathType,
+      currentTransform
+    );
 
     // Obtain scale from matrix and current transformation matrix.
     const matrixScale = Util.singularValueDecompose2dScale(this.matrix);
     const curMatrixScale = Util.singularValueDecompose2dScale(
       this.baseTransform
     );
-    const combinedScale = [
-      matrixScale[0] * curMatrixScale[0],
-      matrixScale[1] * curMatrixScale[1],
-    ];
+    const currentScale = Util.singularValueDecompose2dScale(currentTransform);
+    const combinedScaleX = matrixScale[0] * curMatrixScale[0];
+    const combinedScaleY = matrixScale[1] * curMatrixScale[1];
+
+    const shapeWWidth =
+      Math.ceil((ownerPathBBox[2] - ownerPathBBox[0]) / currentScale[0]) || 1;
+    const shapeHeight =
+      Math.ceil((ownerPathBBox[3] - ownerPathBBox[1]) / currentScale[1]) || 1;
+
+    const xstep = Math.min(this.xstep, shapeWWidth);
+    const ystep = Math.min(this.ystep, shapeHeight);
+
+    // Only a part of the shape may be filled with the pattern thanks to a
+    // clipping path.
+    const ownerClipBox = owner.current.clipBox;
+    const visibleWidth = Math.ceil(ownerClipBox[2] - ownerClipBox[0]);
+    const visibleHeight = Math.ceil(ownerClipBox[3] - ownerClipBox[1]);
 
     // Use width and height values that are as close as possible to the end
     // result when the pattern is used. Too low value makes the pattern look
     // blurry. Too large value makes it look too crispy.
     const dimx = this.getSizeAndScale(
       xstep,
-      this.ctx.canvas.width,
-      combinedScale[0]
+      Math.min(visibleWidth, this.ctx.canvas.width),
+      combinedScaleX
     );
     const dimy = this.getSizeAndScale(
       ystep,
-      this.ctx.canvas.height,
-      combinedScale[1]
+      Math.min(visibleHeight, this.ctx.canvas.height),
+      combinedScaleY
     );
 
     const tmpCanvas = owner.cachedCanvases.getCanvas(
       "pattern",
       dimx.size,
       dimy.size,
-      true
+      /* trackTransform */ true,
+      /* allowOffscreen */ true
     );
     const tmpCtx = tmpCanvas.context;
     const graphics = canvasGraphicsFactory.createCanvasGraphics(tmpCtx);
@@ -590,8 +625,13 @@ class TilingPattern {
 
     graphics.endDrawing();
 
+    const bitmap = tmpCanvas.isOffscreen
+      ? tmpCanvas.canvas.transferToImageBitmap()
+      : tmpCanvas.canvas;
+
     return {
-      canvas: tmpCanvas.canvas,
+      bitmap,
+      isOffscreen: tmpCanvas.isOffscreen,
       scaleX: dimx.scale,
       scaleY: dimy.scale,
       offsetX: adjustedX0,
@@ -664,7 +704,10 @@ class TilingPattern {
       }
     }
 
-    const temporaryPatternCanvas = this.createPatternCanvas(owner);
+    const temporaryPatternCanvas = this.createPatternCanvas(owner, pathType);
+    if (!temporaryPatternCanvas) {
+      return null;
+    }
 
     let domMatrix = new DOMMatrix(matrix);
     // Rescale and so that the ctx.createPattern call generates a pattern with
@@ -678,7 +721,10 @@ class TilingPattern {
       1 / temporaryPatternCanvas.scaleY
     );
 
-    const pattern = ctx.createPattern(temporaryPatternCanvas.canvas, "repeat");
+    const pattern = ctx.createPattern(temporaryPatternCanvas.bitmap, "repeat");
+    if (temporaryPatternCanvas.isOffscreen) {
+      temporaryPatternCanvas.bitmap.close();
+    }
     try {
       pattern.setTransform(domMatrix);
     } catch (ex) {

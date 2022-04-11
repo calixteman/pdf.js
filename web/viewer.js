@@ -96,6 +96,8 @@ function getViewerConfiguration() {
       presentationModeButton: document.getElementById("presentationMode"),
       download: document.getElementById("download"),
       viewBookmark: document.getElementById("viewBookmark"),
+      freeTextModeButton: document.getElementById("freeTextMode"),
+      inkModeButton: document.getElementById("inkMode"),
     },
     secondaryToolbar: {
       toolbar: document.getElementById("secondaryToolbar"),

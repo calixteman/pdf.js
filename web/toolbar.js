@@ -43,6 +43,8 @@ const PAGE_NUMBER_LOADING_INDICATOR = "visiblePageIsLoading";
  * @property {HTMLButtonElement} openFile - Button to open a new document.
  * @property {HTMLButtonElement} presentationModeButton - Button to switch to
  *   presentation mode.
+ * @property {HTMLButtonElement} freeTextModeButton - Button to switch to Free
+ *   Text edition.
  * @property {HTMLButtonElement} download - Button to download the document.
  * @property {HTMLAnchorElement} viewBookmark - Button to obtain a bookmark link
  *   to the current location in the document.
@@ -70,6 +72,8 @@ class Toolbar {
       },
       { element: options.download, eventName: "download" },
       { element: options.viewBookmark, eventName: null },
+      { element: options.freeTextModeButton, eventName: "freetextmode" },
+      { element: options.inkModeButton, eventName: "inkmode" },
     ];
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
       this.buttons.push({ element: options.openFile, eventName: "openfile" });

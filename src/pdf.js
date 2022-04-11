@@ -56,6 +56,7 @@ import {
   PixelsPerInch,
   RenderingCancelledException,
 } from "./display/display_utils.js";
+import { AnnotationEditorLayer } from "./display/annotation_editor_layer.js";
 import { AnnotationLayer } from "./display/annotation_layer.js";
 import { GlobalWorkerOptions } from "./display/worker_options.js";
 import { isNodeJS } from "./shared/is_node.js";
@@ -104,6 +105,7 @@ if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")) {
 }
 
 export {
+  AnnotationEditorLayer,
   AnnotationLayer,
   AnnotationMode,
   build,

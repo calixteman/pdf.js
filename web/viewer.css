@@ -79,6 +79,8 @@
   --toolbarButton-zoomOut-icon: url(images/toolbarButton-zoomOut.svg);
   --toolbarButton-zoomIn-icon: url(images/toolbarButton-zoomIn.svg);
   --toolbarButton-presentationMode-icon: url(images/toolbarButton-presentationMode.svg);
+  --toolbarButton-freeTextMode-icon: url(images/toolbarButton-freeTextMode.svg);
+  --toolbarButton-inkMode-icon: url(images/toolbarButton-inkMode.svg);
   --toolbarButton-print-icon: url(images/toolbarButton-print.svg);
   /*#if GENERIC*/
   --toolbarButton-openFile-icon: url(images/toolbarButton-openFile.svg);
@@ -822,6 +824,24 @@ select {
 #presentationMode::before,
 #secondaryPresentationMode::before {
   mask-image: var(--toolbarButton-presentationMode-icon);
+}
+
+.editionButtons {
+  margin: 2px;
+  display: inline-block;
+}
+.editionButtons > .toolbarButton {
+  float: inline-start;
+}
+
+#freeTextMode::before {
+  position: unset;
+  mask-image: var(--toolbarButton-freeTextMode-icon);
+}
+
+#inkMode::before {
+  position: unset;
+  mask-image: var(--toolbarButton-inkMode-icon);
 }
 
 #print::before,
