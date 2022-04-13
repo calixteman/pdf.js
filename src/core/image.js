@@ -14,6 +14,11 @@
  */
 
 import {
+  applyMaskImageData,
+  decodeGrayscale1BPP,
+  decodeRGB24BPP,
+} from "../shared/image_utils.js";
+import {
   assert,
   FeatureTest,
   FormatError,
@@ -21,7 +26,6 @@ import {
   info,
   warn,
 } from "../shared/util.js";
-import { applyMaskImageData } from "../shared/image_utils.js";
 import { BaseStream } from "./base_stream.js";
 import { ColorSpace } from "./colorspace.js";
 import { DecodeStream } from "./decode_stream.js";
@@ -256,10 +260,9 @@ class PDFImage {
   }
 
   /**
-   * Handles processing of image data and returns the Promise that is resolved
-   * with a PDFImage when the image is ready to be used.
+   * Handles processing of image data.
    */
-  static async buildImage({
+  static buildImage({
     xref,
     res,
     image,
@@ -571,6 +574,7 @@ class PDFImage {
     if (smask) {
       sw = smask.width;
       sh = smask.height;
+      console.log("A", sw, sh, width, height);
       alphaBuf = new Uint8ClampedArray(sw * sh);
       smask.fillGrayBuffer(alphaBuf);
       if (sw !== width || sh !== height) {
@@ -580,6 +584,7 @@ class PDFImage {
       if (mask instanceof PDFImage) {
         sw = mask.width;
         sh = mask.height;
+        console.log("B", sw, sh);
         alphaBuf = new Uint8ClampedArray(sw * sh);
         mask.numComps = 1;
         mask.fillGrayBuffer(alphaBuf);
@@ -663,6 +668,38 @@ class PDFImage {
     }
   }
 
+  createBitmap({ src, width, height, kind }) {
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    let imageData;
+
+    switch (kind) {
+      case ImageKind.GRAYSCALE_1BPP:
+        imageData = ctx.createImageData(width, height);
+        decodeGrayscale1BPP({
+          src,
+          dest: imageData.data,
+          width,
+          height,
+        });
+        break;
+      case ImageKind.RGB_24BPP:
+        imageData = ctx.createImageData(width, height);
+        decodeRGB24BPP({
+          src,
+          dest: imageData.data,
+          width,
+          height,
+        });
+        break;
+      default:
+        imageData = new ImageData(src, width, height);
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.transferToImageBitmap();
+  }
+
   createImageData(forceRGBA = false) {
     const drawWidth = this.drawWidth;
     const drawHeight = this.drawHeight;
@@ -672,6 +709,7 @@ class PDFImage {
       interpolate: this.interpolate,
       kind: 0,
       data: null,
+      bitmap: null,
       // Other fields are filled in below.
     };
 
@@ -683,6 +721,7 @@ class PDFImage {
     // Rows start at byte boundary.
     const rowBytes = (originalWidth * numComps * bpc + 7) >> 3;
     let imgArray;
+    const useCanvas = !forceRGBA && FeatureTest.isOffscreenCanvasSupported;
 
     if (!forceRGBA) {
       // If it is a 1-bit-per-pixel grayscale (i.e. black-and-white) image
@@ -724,17 +763,17 @@ class PDFImage {
           newArray.set(imgArray);
           imgData.data = newArray;
         }
-        if (this.needsDecode) {
-          // Invert the buffer (which must be grayscale if we reached here).
-          assert(
-            kind === ImageKind.GRAYSCALE_1BPP,
-            "PDFImage.createImageData: The image must be grayscale."
-          );
-          const buffer = imgData.data;
-          for (let i = 0, ii = buffer.length; i < ii; i++) {
-            buffer[i] ^= 0xff;
-          }
+
+        if (useCanvas) {
+          imgData.bitmap = this.createBitmap({
+            src: imgData.data,
+            width: drawWidth,
+            height: drawHeight,
+            kind,
+          });
+          imgData.data = null;
         }
+
         return imgData;
       }
       if (this.image instanceof JpegStream && !this.smask && !this.mask) {
@@ -754,6 +793,17 @@ class PDFImage {
               drawHeight,
               /* forceRGB = */ true
             );
+
+            if (useCanvas) {
+              imgData.bitmap = this.createBitmap({
+                src: imgData.data,
+                width: drawWidth,
+                height: drawHeight,
+                kind: imgData.kind,
+              });
+              imgData.data = null;
+            }
+
             return imgData;
         }
       }
@@ -806,6 +856,16 @@ class PDFImage {
     );
     if (maybeUndoPreblend) {
       this.undoPreblend(imgData.data, drawWidth, actualHeight);
+    }
+
+    if (useCanvas) {
+      imgData.bitmap = this.createBitmap({
+        src: imgData.data,
+        width: drawWidth,
+        height: drawHeight,
+        kind: imgData.kind,
+      });
+      imgData.data = null;
     }
 
     return imgData;

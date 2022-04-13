@@ -2780,7 +2780,6 @@ class WorkerTransport {
       switch (type) {
         case "Image":
           pageProxy.objs.resolve(id, imageData);
-
           // Heuristic that will allow us not to store large data.
           const MAX_IMAGE_SIZE_TO_STORE = 8000000;
           if (imageData) {

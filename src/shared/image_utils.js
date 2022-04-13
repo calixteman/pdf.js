@@ -55,4 +55,69 @@ function applyMaskImageData({
   return { srcPos, destPos };
 }
 
-export { applyMaskImageData };
+function decodeGrayscale1BPP({
+  src,
+  srcPos = 0,
+  dest,
+  destPos = 0,
+  width,
+  height,
+}) {
+  const black = FeatureTest.isLittleEndian ? 0xff000000 : 0x000000ff;
+  const white = 0xffffffff;
+  const transparent = 0;
+  const widthInSource = width >> 3;
+  const widthRemainder = width & 7;
+  const srcLength = src.length;
+  dest = new Uint32Array(dest.buffer);
+
+  for (let i = 0; i < height; i++) {
+    for (const max = srcPos + widthInSource; srcPos < max; srcPos++) {
+      const elem = srcPos < srcLength ? src[srcPos] : transparent;
+      dest[destPos++] = elem & 0b10000000 ? white : black;
+      dest[destPos++] = elem & 0b1000000 ? white : black;
+      dest[destPos++] = elem & 0b100000 ? white : black;
+      dest[destPos++] = elem & 0b10000 ? white : black;
+      dest[destPos++] = elem & 0b1000 ? white : black;
+      dest[destPos++] = elem & 0b100 ? white : black;
+      dest[destPos++] = elem & 0b10 ? white : black;
+      dest[destPos++] = elem & 0b1 ? white : black;
+    }
+    if (widthRemainder === 0) {
+      continue;
+    }
+    const elem = srcPos < srcLength ? src[srcPos++] : transparent;
+    for (let j = 0; j < widthRemainder; j++) {
+      dest[destPos++] = elem & (1 << (7 - j)) ? white : black;
+    }
+  }
+
+  return { srcPos, destPos };
+}
+
+function decodeRGB24BPP({ src, srcPos = 0, dest, destPos = 0, width, height }) {
+  dest = new Uint32Array(dest.buffer);
+  if (FeatureTest.isLittleEndian) {
+    // ABGR
+    for (const max = srcPos + width * height * 4; srcPos < max; ) {
+      dest[destPos++] =
+        0xff000000 |
+        src[srcPos++] /* R */ |
+        (src[srcPos++] /* G */ << 8) |
+        (src[srcPos++] /* B */ << 16);
+    }
+  } else {
+    // RGBA
+    for (const max = srcPos + width * height * 4; srcPos < max; ) {
+      dest[destPos++] =
+        (src[srcPos++] /* R */ << 24) |
+        (src[srcPos++] /* G */ << 16) |
+        (src[srcPos++] /* B */ << 8) |
+        0xff;
+    }
+  }
+
+  return { srcPos, destPos };
+}
+
+export { applyMaskImageData, decodeGrayscale1BPP, decodeRGB24BPP };

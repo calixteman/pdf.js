@@ -678,6 +678,12 @@ class CanvasExtraState {
 }
 
 function putBinaryImageData(ctx, imgData, transferMaps = null) {
+  if (imgData.bitmap) {
+    // The bitmap has been created in the worker.
+    ctx.drawImage(imgData.bitmap, 0, 0);
+    return;
+  }
+
   if (typeof ImageData !== "undefined" && imgData instanceof ImageData) {
     ctx.putImageData(imgData, 0, 0);
     return;
@@ -3053,6 +3059,7 @@ class CanvasGraphics {
     if (!this.contentVisible) {
       return;
     }
+
     const width = imgData.width;
     const height = imgData.height;
     const ctx = this.ctx;
@@ -3064,8 +3071,10 @@ class CanvasGraphics {
     let imgToPaint;
     // typeof check is needed due to node.js support, see issue #8489
     if (
-      (typeof HTMLElement === "function" && imgData instanceof HTMLElement) ||
-      !imgData.data
+      (false &&
+        typeof HTMLElement === "function" &&
+        imgData instanceof HTMLElement) ||
+      (!imgData.data && !imgData.bitmap)
     ) {
       imgToPaint = imgData;
     } else {
@@ -3115,6 +3124,9 @@ class CanvasGraphics {
     if (!this.contentVisible) {
       return;
     }
+
+    imgData = this.getObject(imgData.data, imgData);
+
     const ctx = this.ctx;
     const w = imgData.width;
     const h = imgData.height;

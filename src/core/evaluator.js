@@ -752,27 +752,26 @@ class PartialEvaluator {
     operatorList.addDependency(objId);
     args = [objId, w, h];
 
-    PDFImage.buildImage({
+    const imageObj = PDFImage.buildImage({
       xref: this.xref,
       res: resources,
       image,
       isInline,
       pdfFunctionFactory: this._pdfFunctionFactory,
       localColorSpaceCache,
-    })
-      .then(imageObj => {
-        imgData = imageObj.createImageData(/* forceRGBA = */ false);
+    });
 
-        if (cacheKey && imageRef && cacheGlobally) {
-          this.globalImageCache.addByteSize(imageRef, imgData.data.length);
-        }
-        return this._sendImgData(objId, imgData, cacheGlobally);
-      })
-      .catch(reason => {
-        warn(`Unable to decode image "${objId}": "${reason}".`);
-
-        return this._sendImgData(objId, /* imgData = */ null, cacheGlobally);
-      });
+    try {
+      imgData = imageObj.createImageData(/* forceRGBA = */ false);
+      console.log("COUCOCU", imgData, cacheGlobally, args);
+      if (cacheKey && imageRef && cacheGlobally) {
+        this.globalImageCache.addByteSize(imageRef, imgData.data.length);
+      }
+      this._sendImgData(objId, imgData, cacheGlobally);
+    } catch (reason) {
+      warn(`Unable to decode image "${objId}": "${reason}".`);
+      this._sendImgData(objId, /* imgData = */ null, cacheGlobally);
+    }
 
     operatorList.addImageOps(OPS.paintImageXObject, args, optionalContent);
 
