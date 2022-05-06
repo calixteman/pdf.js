@@ -1280,10 +1280,10 @@ class CanvasGraphics {
     // backdrop. The problem with a transparent backdrop though is we then
     // don't get sub pixel anti aliasing on text, creating temporary
     // transparent canvas when we have blend modes.
+    const savedFillStyle = this.ctx.fillStyle;
     const width = this.ctx.canvas.width;
     const height = this.ctx.canvas.height;
     const defaultBackgroundColor = background || "#ffffff";
-    this.ctx.save();
 
     if (this.foregroundColor && this.backgroundColor) {
       // Get the #RRGGBB value of the color. If it's a name (e.g. CanvasText)
@@ -1335,7 +1335,7 @@ class CanvasGraphics {
 
     this.ctx.fillStyle = this.backgroundColor || defaultBackgroundColor;
     this.ctx.fillRect(0, 0, width, height);
-    this.ctx.restore();
+    this.ctx.fillStyle = savedFillStyle;
 
     if (transparency) {
       const transparentCanvas = this.cachedCanvases.getCanvas(
