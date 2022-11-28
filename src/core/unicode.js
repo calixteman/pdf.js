@@ -247,11 +247,7 @@ function isRTLRangeFor(value) {
 const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
   // prettier-ignore
   return [
-    "\u00A8", "\u0020\u0308",
-    "\u00AF", "\u0020\u0304",
-    "\u00B4", "\u0020\u0301",
     "\u00B5", "\u03BC",
-    "\u00B8", "\u0020\u0327",
     "\u0132", "\u0049\u004A",
     "\u0133", "\u0069\u006A",
     "\u013F", "\u004C\u00B7",
@@ -270,14 +266,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\u01F1", "\u0044\u005A",
     "\u01F2", "\u0044\u007A",
     "\u01F3", "\u0064\u007A",
-    "\u02D8", "\u0020\u0306",
-    "\u02D9", "\u0020\u0307",
-    "\u02DA", "\u0020\u030A",
-    "\u02DB", "\u0020\u0328",
-    "\u02DC", "\u0020\u0303",
-    "\u02DD", "\u0020\u030B",
-    "\u037A", "\u0020\u0345",
-    "\u0384", "\u0020\u0301",
     "\u03D0", "\u03B2",
     "\u03D1", "\u03B8",
     "\u03D2", "\u03A5",
@@ -301,10 +289,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\u0F77", "\u0FB2\u0F81",
     "\u0F79", "\u0FB3\u0F81",
     "\u1E9A", "\u0061\u02BE",
-    "\u1FBD", "\u0020\u0313",
-    "\u1FBF", "\u0020\u0313",
-    "\u1FC0", "\u0020\u0342",
-    "\u1FFE", "\u0020\u0314",
     "\u2002", "\u0020",
     "\u2003", "\u0020",
     "\u2004", "\u0020",
@@ -313,7 +297,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\u2008", "\u0020",
     "\u2009", "\u0020",
     "\u200A", "\u0020",
-    "\u2017", "\u0020\u0333",
     "\u2024", "\u002E",
     "\u2025", "\u002E\u002E",
     "\u2026", "\u002E\u002E\u002E",
@@ -322,7 +305,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\u2036", "\u2035\u2035",
     "\u2037", "\u2035\u2035\u2035",
     "\u203C", "\u0021\u0021",
-    "\u203E", "\u0020\u0305",
     "\u2047", "\u003F\u003F",
     "\u2048", "\u003F\u0021",
     "\u2049", "\u0021\u003F",
@@ -669,8 +651,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\u3038", "\u5341",
     "\u3039", "\u5344",
     "\u303A", "\u5345",
-    "\u309B", "\u0020\u3099",
-    "\u309C", "\u0020\u309A",
     "\u3131", "\u1100",
     "\u3132", "\u1101",
     "\u3133", "\u11AA",
@@ -1150,12 +1130,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\uFC5B", "\u0630\u0670",
     "\uFC5C", "\u0631\u0670",
     "\uFC5D", "\u0649\u0670",
-    "\uFC5E", "\u0020\u064C\u0651",
-    "\uFC5F", "\u0020\u064D\u0651",
-    "\uFC60", "\u0020\u064E\u0651",
-    "\uFC61", "\u0020\u064F\u0651",
-    "\uFC62", "\u0020\u0650\u0651",
-    "\uFC63", "\u0020\u0651\u0670",
     "\uFC64", "\u0626\u0631",
     "\uFC65", "\u0626\u0632",
     "\uFC66", "\u0626\u0645",
@@ -1492,10 +1466,6 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
     "\uFDC5", "\u0635\u0645\u0645",
     "\uFDC6", "\u0633\u062E\u064A",
     "\uFDC7", "\u0646\u062C\u064A",
-    "\uFE49", "\u203E",
-    "\uFE4A", "\u203E",
-    "\uFE4B", "\u203E",
-    "\uFE4C", "\u203E",
     "\uFE4D", "\u005F",
     "\uFE4E", "\u005F",
     "\uFE4F", "\u005F",
@@ -1627,6 +1597,70 @@ const getNormalizedUnicodes = getArrayLookupTableFactory(function () {
   ];
 });
 
+const SpaceWithDiacriticsMap = new Map([
+  ["\u00a8" /* '¨' */, "\u0308"],
+  ["\u00af" /* '¯' */, "\u0304"],
+  ["\u00b4" /* '´' */, "\u0301"],
+  ["\u00b8" /* '¸' */, "\u0327"],
+  ["\u02d8" /* '˘' */, "\u0306"],
+  ["\u02d9" /* '˙' */, "\u0307"],
+  ["\u02da" /* '˚' */, "\u030a"],
+  ["\u02db" /* '˛' */, "\u0328"],
+  ["\u02dc" /* '˜' */, "\u0303"],
+  ["\u02dd" /* '˝' */, "\u030b"],
+  ["\u037a" /* 'ͺ' */, "\u0345"],
+  ["\u0384" /* '΄' */, "\u0301"],
+  ["\u0385" /* '΅' */, "\u0308\u0301"],
+  ["\u1fbd" /* '᾽' */, "\u0313"],
+  ["\u1fbf" /* '᾿' */, "\u0313"],
+  ["\u1fc0" /* '῀' */, "\u0342"],
+  ["\u1fc1" /* '῁' */, "\u0308\u0342"],
+  ["\u1fcd" /* '῍' */, "\u0313\u0300"],
+  ["\u1fce" /* '῎' */, "\u0313\u0301"],
+  ["\u1fcf" /* '῏' */, "\u0313\u0342"],
+  ["\u1fdd" /* '῝' */, "\u0314\u0300"],
+  ["\u1fde" /* '῞' */, "\u0314\u0301"],
+  ["\u1fdf" /* '῟' */, "\u0314\u0342"],
+  ["\u1fed" /* '῭' */, "\u0308\u0300"],
+  ["\u1fee" /* '΅' */, "\u0308\u0301"],
+  ["\u1ffd" /* '´' */, "\u0301"],
+  ["\u1ffe" /* '῾' */, "\u0314"],
+  ["\u2017" /* '‗' */, "\u0333"],
+  ["\u203e" /* '‾' */, "\u0305"],
+  ["\u309b" /* '゛' */, "\u3099"],
+  ["\u309c" /* '゜' */, "\u309a"],
+  ["\ufc5e" /* 'ﱞ' */, "\u064c\u0651"],
+  ["\ufc5f" /* 'ﱟ' */, "\u064d\u0651"],
+  ["\ufc60" /* 'ﱠ' */, "\u064e\u0651"],
+  ["\ufc61" /* 'ﱡ' */, "\u064f\u0651"],
+  ["\ufc62" /* 'ﱢ' */, "\u0650\u0651"],
+  ["\ufc63" /* 'ﱣ' */, "\u0651\u0670"],
+  ["\ufe49" /* '﹉' */, "\u0305"],
+  ["\ufe4a" /* '﹊' */, "\u0305"],
+  ["\ufe4b" /* '﹋' */, "\u0305"],
+  ["\ufe4c" /* '﹌' */, "\u0305"],
+  ["\ufe70" /* 'ﹰ' */, "\u064b"],
+  ["\ufe72" /* 'ﹲ' */, "\u064c"],
+  ["\ufe74" /* 'ﹴ' */, "\u064d"],
+  ["\ufe76" /* 'ﹶ' */, "\u064e"],
+  ["\ufe78" /* 'ﹸ' */, "\u064f"],
+  ["\ufe7a" /* 'ﹺ' */, "\u0650"],
+  ["\ufe7c" /* 'ﹼ' */, "\u0651"],
+  ["\ufe7e" /* 'ﹾ' */, "\u0652"],
+  ["\uffe3" /* '￣' */, "\u0304"],
+]);
+
+function combineDiacritic(char, diacritic) {
+  // The char is a space with a diacritic.
+  // The mapping contains the decomposition (NFKD) of this char without the
+  // leading space.
+  return `${char}${SpaceWithDiacriticsMap.get(diacritic)}`.normalize("NFKC");
+}
+
+function isSpaceDiacritic(char) {
+  return SpaceWithDiacriticsMap.has(char);
+}
+
 function reverseIfRtl(chars) {
   const charsLength = chars.length;
   // Reverse an arabic ligature.
@@ -1664,10 +1698,12 @@ function clearUnicodeCaches() {
 
 export {
   clearUnicodeCaches,
+  combineDiacritic,
   getCharUnicodeCategory,
   getNormalizedUnicodes,
   getUnicodeForGlyph,
   getUnicodeRangeFor,
+  isSpaceDiacritic,
   mapSpecialUnicodeValues,
   reverseIfRtl,
 };

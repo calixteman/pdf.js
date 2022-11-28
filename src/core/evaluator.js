@@ -34,6 +34,11 @@ import {
 } from "../shared/util.js";
 import { CMapFactory, IdentityCMap } from "./cmap.js";
 import { Cmd, Dict, EOF, isName, Name, Ref, RefSet } from "./primitives.js";
+import {
+  combineDiacritic,
+  getUnicodeForGlyph,
+  isSpaceDiacritic,
+} from "./unicode.js";
 import { ErrorFont, Font } from "./fonts.js";
 import { FontFlags, getFontType } from "./fonts_utils.js";
 import {
@@ -70,7 +75,6 @@ import { DecodeStream } from "./decode_stream.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getLookupTableFactory } from "./core_utils.js";
 import { getMetrics } from "./metrics.js";
-import { getUnicodeForGlyph } from "./unicode.js";
 import { MurmurHash3_64 } from "../shared/murmurhash3.js";
 import { OperatorList } from "./operator_list.js";
 import { PDFImage } from "./image.js";
@@ -2553,7 +2557,7 @@ class PartialEvaluator {
       ];
     }
 
-    function compareWithLastPosition() {
+    function compareWithLastPosition(char) {
       const currentTransform = getCurrentTextTransform();
       let posX = currentTransform[4];
       let posY = currentTransform[5];
@@ -2709,6 +2713,42 @@ class PartialEvaluator {
           return true;
         }
 
+        if (false && isSpaceDiacritic(char)) {
+          // We've a negative space and this char is a space with a diacritic
+          // so we likely want to combine the diacritic with the previous char.
+          let isCombined = false;
+          let { str } = textContentItem;
+          if (str.length === 0) {
+            if (textContent.items.length > 0) {
+              const last = textContent.items.at(-1);
+              if (!last.hasEOL) {
+                str = last.str;
+                last.str = str.slice(-1) + combineDiacritic(str.at(-1), char);
+                isCombined = true;
+              }
+            } else {
+              // The combination will be made in the text layer.
+              textContent.items.push({
+                str: " ",
+                dir: "ltr",
+                width: Math.abs(advanceX),
+                height: 0,
+                transform: textContentItem.prevTransform,
+                fontName: textContentItem.fontName,
+                hasEOL: false,
+              });
+            }
+          } else {
+            textContentItem.str =
+              str.slice(-1) + combineDiacritic(str.at(-1), char);
+            isCombined = true;
+          }
+
+          if (isCombined) {
+            return false;
+          }
+        }
+
         // We're moving back so in case the last char was a whitespace
         // we cancel it: it doesn't make sense to insert it.
         resetLastChars();
@@ -2809,7 +2849,8 @@ class PartialEvaluator {
           continue;
         }
 
-        if (!compareWithLastPosition()) {
+        const glyphUnicode = glyph.normalizedUnicode;
+        if (!compareWithLastPosition(glyphUnicode)) {
           // The glyph is not in page so just skip it.
           continue;
         }
@@ -2836,7 +2877,6 @@ class PartialEvaluator {
           textChunk.prevTransform = getCurrentTextTransform();
         }
 
-        const glyphUnicode = glyph.normalizedUnicode;
         if (saveLastChar(glyphUnicode)) {
           // The two last chars are a non-whitespace followed by a whitespace
           // and then this non-whitespace, so we insert a whitespace here.

@@ -394,13 +394,14 @@ class TextLayerRenderTask {
       this._processItems(textItems, textStyles);
       capability.resolve();
     } else if (this._textContentStream) {
+      let x = 0;
       const pump = () => {
         this._reader.read().then(({ value, done }) => {
           if (done) {
             capability.resolve();
             return;
           }
-
+          console.log("COUCOU", x++, value.items.length);
           Object.assign(styleCache, value.styles);
           this._processItems(value.items, styleCache);
           pump();
