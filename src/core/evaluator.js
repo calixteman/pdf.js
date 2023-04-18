@@ -2249,6 +2249,7 @@ class PartialEvaluator {
     seenStyles = new Set(),
     viewBox,
     markedContentData = null,
+    loadFonts = false,
     disableNormalization = false,
   }) {
     // Ensure that `resources`/`stateManager` is correctly initialized,
@@ -2282,6 +2283,11 @@ class PartialEvaluator {
       transform: null,
       fontName: null,
       hasEOL: false,
+      spaceN: 0,
+      spaceSum: 0,
+      trackingN: 0,
+      trackingSum: 0,
+      unicodeWithMultipleGlyphs: null,
     };
 
     // Use a circular buffer (length === 2) to save the last chars in the
@@ -2389,6 +2395,7 @@ class PartialEvaluator {
         transform,
         fontName,
         hasEOL: false,
+        isFontForHtml: textContentItem.isFontForHtml,
       });
     }
 
@@ -2425,18 +2432,21 @@ class PartialEvaluator {
       if (textContentItem.initialized) {
         return textContentItem;
       }
-      const { font, loadedName } = textState;
+      const { font, loadedName, isFontForHtml, unicodeWithMultipleGlyphs } =
+        textState;
       if (!seenStyles.has(loadedName)) {
         seenStyles.add(loadedName);
 
         textContent.styles[loadedName] = {
           fontFamily: font.fallbackName,
-          ascent: font.ascent,
-          descent: font.descent,
+          ascent: font.typoAscent || font.ascent || 0,
+          descent: font.typoDescent || font.descent || 0,
           vertical: font.vertical,
         };
       }
       textContentItem.fontName = loadedName;
+      textContentItem.isFontForHtml = isFontForHtml;
+      textContentItem.unicodeWithMultipleGlyphs = unicodeWithMultipleGlyphs;
 
       const trm = (textContentItem.transform = getCurrentTextTransform());
       if (!font.vertical) {
@@ -2469,9 +2479,23 @@ class PartialEvaluator {
       textContentItem.spaceInFlowMin = fontSize * SPACE_IN_FLOW_MIN_FACTOR;
       textContentItem.spaceInFlowMax = fontSize * SPACE_IN_FLOW_MAX_FACTOR;
       textContentItem.hasEOL = false;
+      textContentItem.spaceN = 0;
+      textContentItem.spaceSum = 0;
+      textContentItem.trackingN = 0;
+      textContentItem.trackingSum = 0;
 
       textContentItem.initialized = true;
       return textContentItem;
+    }
+
+    function addSpaceWidth(w) {
+      textContentItem.spaceN += 1;
+      textContentItem.spaceSum += w * textContentItem.textAdvanceScale;
+    }
+
+    function addTrackingSpaceWidth(w) {
+      textContentItem.trackingN += 1;
+      textContentItem.trackingSum += w * textContentItem.textAdvanceScale;
     }
 
     function updateAdvanceScale() {
@@ -2515,11 +2539,14 @@ class PartialEvaluator {
         height: Math.abs(textChunk.totalHeight),
         transform: textChunk.transform,
         fontName: textChunk.fontName,
+        isFontForHtml: textChunk.isFontForHtml,
         hasEOL: textChunk.hasEOL,
+        averageSpaceWidth: textChunk.spaceSum / textChunk.spaceN,
+        averageTrackingWidth: textChunk.trackingSum / textChunk.trackingN,
       };
     }
 
-    function handleSetFont(fontName, fontRef) {
+    function handleSetFont(fontName, fontRef, handler) {
       return self
         .loadFont(fontName, fontRef, resources)
         .then(function (translated) {
@@ -2537,10 +2564,22 @@ class PartialEvaluator {
             });
         })
         .then(function (translated) {
-          textState.loadedName = translated.loadedName;
+          if (translated.font.systemFontInfo?.css) {
+            textState.loadedName = translated.font.systemFontInfo.css;
+            textState.isFontForHtml = true;
+          } else {
+            textState.loadedName = translated.loadedName;
+            textState.isFontForHtml =
+            !translated.font.missingFile && !translated.font.isType3Font;
+          }
+          textState.unicodeWithMultipleGlyphs =
+            translated.font.unicodeWithMultipleGlyphs;
           textState.font = translated.font;
           textState.fontMatrix =
             translated.font.fontMatrix || FONT_IDENTITY_MATRIX;
+          if (handler) {
+            translated.send(handler);
+          }
         });
     }
 
@@ -2584,6 +2623,7 @@ class PartialEvaluator {
       let lastPosY = textContentItem.prevTransform[5];
 
       if (lastPosX === posX && lastPosY === posY) {
+        addTrackingSpaceWidth(0);
         return true;
       }
 
@@ -2677,6 +2717,7 @@ class PartialEvaluator {
             flushTextContentItem();
             pushWhitespace({ height: Math.abs(advanceY) });
           } else {
+            addTrackingSpaceWidth(advanceY);
             textContentItem.height += advanceY;
           }
         } else if (
@@ -2688,7 +2729,15 @@ class PartialEvaluator {
         ) {
           if (textContentItem.str.length === 0) {
             resetLastChars();
-            pushWhitespace({ height: Math.abs(advanceY) });
+            const transform = textContentItem.prevTransform;
+            const height = Math.abs(advanceY);
+            pushWhitespace({
+              width: Math.hypot(transform[0], transform[1]),
+              height,
+              transform,
+              isUniqueUnicode: textContentItem.isUniqueUnicode,
+              averageSpaceWidth: height * textContentItem.averageSpaceWidth,
+            });
           } else {
             textContentItem.height += advanceY;
           }
@@ -2743,6 +2792,7 @@ class PartialEvaluator {
           flushTextContentItem();
           pushWhitespace({ width: Math.abs(advanceX) });
         } else {
+          addTrackingSpaceWidth(advanceX);
           textContentItem.width += advanceX;
         }
       } else if (
@@ -2750,7 +2800,14 @@ class PartialEvaluator {
       ) {
         if (textContentItem.str.length === 0) {
           resetLastChars();
-          pushWhitespace({ width: Math.abs(advanceX) });
+          const transform = textContentItem.prevTransform;
+          const width = Math.abs(advanceX);
+          pushWhitespace({
+            width,
+            height: Math.hypot(transform[2], transform[3]),
+            transform,
+            averageSpaceWidth: width * textContentItem.averageSpaceWidth,
+          });
         } else {
           textContentItem.width += advanceX;
         }
@@ -2784,7 +2841,7 @@ class PartialEvaluator {
 
       const glyphs = font.charsToGlyphs(chars);
       const scale = textState.fontMatrix[0] * textState.fontSize;
-
+      //console.log("GL", glyphs.map(x => x.unicode).join(""), glyphs);//.map(x => [x.unicode, x.unicode.length]))
       for (let i = 0, ii = glyphs.length; i < ii; i++) {
         const glyph = glyphs[i];
         const { category } = glyph;
@@ -2836,7 +2893,23 @@ class PartialEvaluator {
 
         // Must be called after compareWithLastPosition because
         // the textContentItem could have been flushed.
-        const textChunk = ensureTextContentItem();
+        let textChunk = ensureTextContentItem();
+        const glyphUnicode = glyph.unicode;
+        const hasMultipleGlyph =
+          textChunk.unicodeWithMultipleGlyphs.has(glyphUnicode);
+
+        if (
+          (glyphUnicode.length > 1) ||
+          (textChunk.isFontForHtml && hasMultipleGlyph) ||
+          (textState.isFontForHtml &&
+            !textChunk.isFontForHtml &&
+            !hasMultipleGlyph)
+        ) {
+          flushTextContentItem();
+          textChunk = ensureTextContentItem();
+          textChunk.isFontForHtml = !hasMultipleGlyph;
+        }
+
         if (category.isZeroWidthDiacritic) {
           scaledDim = 0;
         }
@@ -2856,16 +2929,22 @@ class PartialEvaluator {
           textChunk.prevTransform = getCurrentTextTransform();
         }
 
-        const glyphUnicode = glyph.unicode;
         if (saveLastChar(glyphUnicode)) {
           // The two last chars are a non-whitespace followed by a whitespace
           // and then this non-whitespace, so we insert a whitespace here.
           // Replaces all whitespaces with standard spaces (0x20), to avoid
           // alignment issues between the textLayer and the canvas if the text
           // contains e.g. tabs (fixes issue6612.pdf).
+          console.log("EXTRA SPACE");
           textChunk.str.push(" ");
         }
         textChunk.str.push(glyphUnicode);
+
+        if (glyphUnicode.length > 1) {
+          textChunk.isFontForHtml = false;
+          flushTextContentItem();
+          textChunk = ensureTextContentItem();
+        }
 
         if (charSpacing) {
           if (!font.vertical) {
@@ -2893,7 +2972,9 @@ class PartialEvaluator {
           height: 0,
           transform: getCurrentTextTransform(),
           fontName: textState.loadedName,
+          isFontForHtml: textContentItem.isFontForHtml,
           hasEOL: true,
+          averageSpaceWidth: 0,
         });
       }
     }
@@ -2906,16 +2987,20 @@ class PartialEvaluator {
         if (textContentItem.initialized) {
           resetLastChars();
           textContentItem.str.push(" ");
+          addSpaceWidth(width);
         }
         return false;
       }
 
       const fontName = textContentItem.fontName;
 
-      let height = 0;
-      if (textContentItem.vertical) {
+      const transform = transf || getCurrentTextTransform();
+      let height;
+      if (!textContentItem.vertical) {
+        height = Math.hypot(transform[2], transform[3]);
+      } else {
         height = width;
-        width = 0;
+        width = Math.hypot(transform[0], transform[1]);
       }
 
       flushTextContentItem();
@@ -2923,8 +3008,11 @@ class PartialEvaluator {
       pushWhitespace({
         width: Math.abs(width),
         height: Math.abs(height),
-        transform: transf || getCurrentTextTransform(),
+        transform,
         fontName,
+        averageSpaceWidth:
+          (textContentItem.vertical ? height : width) *
+          textContentItem.textAdvanceScale,
       });
 
       return true;
@@ -3012,7 +3100,9 @@ class PartialEvaluator {
             flushTextContentItem();
             textState.fontName = fontNameArg;
             textState.fontSize = fontSizeArg;
-            next(handleSetFont(fontNameArg, null));
+            next(
+              handleSetFont(fontNameArg, null, loadFonts ? self.handler : null)
+            );
             return;
           case OPS.setTextRise:
             textState.textRise = args[0];
@@ -3236,6 +3326,7 @@ class PartialEvaluator {
                     seenStyles,
                     viewBox,
                     markedContentData,
+                    loadFonts,
                     disableNormalization,
                   })
                   .then(function () {

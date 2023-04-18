@@ -609,6 +609,7 @@ class Page {
     includeMarkedContent,
     disableNormalization,
     sink,
+    loadFonts,
   }) {
     const contentStreamPromise = this.getContentStream();
     const resourcesPromise = this.loadResources([
@@ -641,6 +642,7 @@ class Page {
         disableNormalization,
         sink,
         viewBox: this.view,
+        loadFonts,
       });
     });
   }

@@ -110,6 +110,7 @@ const EXPORT_DATA_EXTRA_PROPERTIES = [
   "isMonospace",
   "isSerifFont",
   "isSymbolicFont",
+  "unicodeWithMultipleGlyphs",
   "seacMap",
   "toFontChar",
   "toUnicode",
@@ -477,9 +478,37 @@ function adjustMapping(charCodeToGlyphId, hasGlyph, newGlyphZeroId, toUnicode) {
   const isInPrivateArea = code =>
     (PRIVATE_USE_AREAS[0][0] <= code && code <= PRIVATE_USE_AREAS[0][1]) ||
     (PRIVATE_USE_AREAS[1][0] <= code && code <= PRIVATE_USE_AREAS[1][1]);
+  const unicodeWithMultipleGlyphs = new Set();
+
   for (let originalCharCode in charCodeToGlyphId) {
     originalCharCode |= 0;
     let glyphId = charCodeToGlyphId[originalCharCode];
+    
+    // Fix for bug 1778484:
+    // The charcodes are moved into a private use area to fix some rendering
+    // issues (https://github.com/mozilla/pdf.js/pull/9340) but when printing
+    // to PDF the generated font will contain wrong chars. We can avoid that by
+    // adding the unicode to the cmap and the print backend will then map the
+    // glyph ids to the correct unicode.
+    let unicode = toUnicode.get(originalCharCode);
+    if (typeof unicode === "string") {
+      unicode = unicode.codePointAt(0);
+    }
+
+    if (unicode && !isInPrivateArea(unicode) && !usedGlyphIds.has(glyphId)) {
+      if (toUnicodeExtraMap.has(unicode)) {
+        // Different glyphs can map on the same unicode: it's pretty common in
+        // arabic where a char can have different forms depending on its
+        // position within a word. But with a latin font, it's possible to have
+        // different kind of "1" (normal one, exponent, script, ...) and each
+        // of them maps onto "1".
+        unicodeWithMultipleGlyphs.add(String.fromCodePoint(unicode));
+      } else {
+        toUnicodeExtraMap.set(unicode, glyphId);
+      }
+      usedGlyphIds.add(glyphId);
+    }
+
     // For missing glyphs don't create the mappings so the glyph isn't
     // drawn.
     if (!hasGlyph(glyphId)) {
@@ -499,29 +528,16 @@ function adjustMapping(charCodeToGlyphId, hasGlyph, newGlyphZeroId, toUnicode) {
       glyphId = newGlyphZeroId;
     }
 
-    // Fix for bug 1778484:
-    // The charcodes are moved into a private use area to fix some rendering
-    // issues (https://github.com/mozilla/pdf.js/pull/9340) but when printing
-    // to PDF the generated font will contain wrong chars. We can avoid that by
-    // adding the unicode to the cmap and the print backend will then map the
-    // glyph ids to the correct unicode.
-    let unicode = toUnicode.get(originalCharCode);
-    if (typeof unicode === "string") {
-      unicode = unicode.codePointAt(0);
-    }
-    if (unicode && !isInPrivateArea(unicode) && !usedGlyphIds.has(glyphId)) {
-      toUnicodeExtraMap.set(unicode, glyphId);
-      usedGlyphIds.add(glyphId);
-    }
-
     newMap[fontCharCode] = glyphId;
     toFontChar[originalCharCode] = fontCharCode;
   }
+
   return {
     toFontChar,
     charCodeToGlyphId: newMap,
     toUnicodeExtraMap,
     nextAvailableFontCharCode,
+    unicodeWithMultipleGlyphs,
   };
 }
 
@@ -708,6 +724,31 @@ function createCmapTable(glyphs, toUnicodeExtraMap, numGlyphs) {
   );
 }
 
+function readTypoAscDesc(os2, file, dontCheckSelection) {
+  file.pos = (file.start || 0) + os2.offset;
+  const version = file.getUint16();
+  file.skip(60);
+  const fsSelection = file.getUint16();
+  if (!dontCheckSelection && (version === 0xffff || !(fsSelection & 128))) {
+    // If bit 7 isn't set we aren't obliged to use the typo values:
+    // https://learn.microsoft.com/en-us/typography/opentype/spec/os2#fsselection
+    return null;
+  }
+  file.skip(4);
+  const sTypoAscender = file.getInt16();
+  const sTypoDescender = file.getInt16();
+
+  if (sTypoAscender !== 0 || sTypoDescender !== 0) {
+    return [sTypoAscender, sTypoDescender];
+  }
+
+  file.skip(2);
+  const usWinAscent = file.getUint16();
+  const usWinDescent = file.getUint16();
+
+  return [usWinAscent, usWinDescent];
+}
+
 function validateOS2Table(os2, file) {
   file.pos = (file.start || 0) + os2.offset;
   const version = file.getUint16();
@@ -735,7 +776,7 @@ function validateOS2Table(os2, file) {
   return true;
 }
 
-function createOS2Table(properties, charstrings, override) {
+function createOS2Table(properties, charstrings, override, output) {
   override ||= {
     unitsPerEm: 0,
     yMax: 0,
@@ -807,6 +848,10 @@ function createOS2Table(properties, charstrings, override) {
   if (typoDescent > 0 && properties.descent > 0 && bbox[1] < 0) {
     typoDescent = -typoDescent; // fixing incorrect descent
   }
+
+  output.typoAscent = typoAscent / unitsPerEm;
+  output.typoDescent = typoDescent / unitsPerEm;
+
   const winAscent = override.yMax || typoAscent;
   const winDescent = -override.yMin || -typoDescent;
 
@@ -1013,6 +1058,7 @@ class Font {
 
     this.toUnicode = properties.toUnicode;
     this.toFontChar = [];
+    this.unicodeWithMultipleGlyphs = new Set();
 
     if (properties.type === "Type3") {
       for (let charCode = 0; charCode < 256; charCode++) {
@@ -1772,7 +1818,8 @@ class Font {
       metrics,
       headTable,
       numGlyphs,
-      dupFirstEntry
+      dupFirstEntry,
+      charCodeToGlyphId
     ) {
       if (!header) {
         if (metrics) {
@@ -1780,6 +1827,7 @@ class Font {
         }
         return;
       }
+      //console.log("sanitizeMetrics", properties.widths)
 
       file.pos = (file.start || 0) + header.offset;
       file.pos += 4; // version
@@ -1820,6 +1868,43 @@ class Font {
       const numOfSidebearings = numGlyphs - numOfMetrics;
       const numMissing =
         numOfSidebearings - ((metrics.length - numOfMetrics * 4) >> 1);
+
+        /*const glyphToWidth = new Array(numGlyphs);
+        const { widths } = properties;
+        const multipleGid = [];
+        for (let i = 0, ii = widths.length; i < ii; i++) {
+          // mapping: charCode to gid.
+          // widths: charCode to width.
+          // i: charCode.
+          const gid = charCodeToGlyphId[i];
+          // If glyphToWidth has already an entry for this gid just remove it
+          // and we'll use the width from the font.
+          if (glyphToWidth[gid] !== undefined) {
+            multipleGid.push(gid);
+          } else {
+            glyphToWidth[gid] = widths[i];
+          }
+        }
+        for (const gid of multipleGid) {
+          glyphToWidth[gid] = undefined;
+        }
+
+        console.log("charCodeToGlyphId", charCodeToGlyphId, metrics)
+        for (let i = 0; i < metrics.data.length; i += 2) {
+          console.log("AAdvcanceWidth", i, int16(metrics.data[i], metrics.data[i + 1]))
+        }*/
+      /*for (let i = 0; i < glyphToWidth.length; i++) {
+        const width = glyphToWidth[i];
+        if (width === undefined) {
+          continue;
+        }
+        const advanceWidth = int16(metrics.data[4 * i], metrics.data[4 * i + 1]);
+        console.log("advanceWidth", i, advanceWidth, width, Math.floor(2.048*width));
+        metrics.data[4 * i] = (Math.floor(2.048*width) >> 8) & 0xff;
+        metrics.data[4 * i + 1] = (Math.floor(2.048*width)) & 0xff;
+        writeSignedInt16(metrics.data, 4 * i + 2, 0);
+      }*/
+
 
       if (numMissing > 0) {
         // For each missing glyph, we set both the width and lsb to 0 (zero).
@@ -2725,17 +2810,6 @@ class Font {
       delete tables["cvt "];
     }
 
-    // Ensure the hmtx table contains the advance width and
-    // sidebearings information for numGlyphs in the maxp table
-    sanitizeMetrics(
-      font,
-      tables.hhea,
-      tables.hmtx,
-      tables.head,
-      numGlyphsOut,
-      dupFirstEntry
-    );
-
     if (!tables.head) {
       throw new FormatError('Required "head" table is not found');
     }
@@ -2992,6 +3066,18 @@ class Font {
       glyphZeroId = 0;
     }
 
+    // Ensure the hmtx table contains the advance width and
+    // sidebearings information for numGlyphs in the maxp table
+    sanitizeMetrics(
+      font,
+      tables.hhea,
+      tables.hmtx,
+      tables.head,
+      numGlyphsOut,
+      dupFirstEntry,
+      charCodeToGlyphId
+    );
+
     // When `cssFontInfo` is set, the font is used to render text in the HTML
     // view (e.g. with Xfa) so nothing must be moved in the private use area.
     if (!properties.cssFontInfo) {
@@ -3002,6 +3088,7 @@ class Font {
         glyphZeroId,
         this.toUnicode
       );
+      this.unicodeWithMultipleGlyphs = newMapping.unicodeWithMultipleGlyphs;
       this.toFontChar = newMapping.toFontChar;
       tables.cmap = {
         tag: "cmap",
@@ -3012,15 +3099,34 @@ class Font {
         ),
       };
 
-      if (!tables["OS/2"] || !validateOS2Table(tables["OS/2"], font)) {
+      const os2 = tables["OS/2"];
+      if (!os2 || !validateOS2Table(os2, font)) {
+        const output = {};
         tables["OS/2"] = {
           tag: "OS/2",
           data: createOS2Table(
             properties,
             newMapping.charCodeToGlyphId,
-            metricsOverride
+            metricsOverride,
+            output
           ),
         };
+        this.typoAscent = output.typoAscent;
+        this.typoDescent = output.typoDescent;
+      } else {
+        const ascDesc = readTypoAscDesc(
+          os2,
+          font,
+          this.ascent === 0 && this.descent === 0
+        );
+        if (ascDesc) {
+          const { unitsPerEm } = metricsOverride;
+          this.typoAscent = ascDesc[0] / unitsPerEm;
+          this.typoDescent = ascDesc[1] / unitsPerEm;
+        } else {
+          this.typoAscent = this.ascent;
+          this.typoDescent = this.descent;
+        }
       }
     }
 
@@ -3100,6 +3206,7 @@ class Font {
         glyphZeroId,
         this.toUnicode
       );
+      this.unicodeWithMultipleGlyphs = newMapping.unicodeWithMultipleGlyphs;
       this.toFontChar = newMapping.toFontChar;
       newCharCodeToGlyphId = newMapping.charCodeToGlyphId;
       toUnicodeExtraMap = newMapping.toUnicodeExtraMap;
@@ -3181,7 +3288,13 @@ class Font {
     // PostScript Font Program
     builder.addTable("CFF ", font.data);
     // OS/2 and Windows Specific metrics
-    builder.addTable("OS/2", createOS2Table(properties, newCharCodeToGlyphId));
+    const output = {};
+    builder.addTable(
+      "OS/2",
+      createOS2Table(properties, newCharCodeToGlyphId, null, output)
+    );
+    this.typoAscent = output.typoAscent;
+    this.typoDescent = output.typoDescent;
     // Character to glyphs mapping
     builder.addTable(
       "cmap",
@@ -3213,8 +3326,8 @@ class Font {
     builder.addTable(
       "hhea",
       "\x00\x01\x00\x00" + // Version number
-        safeString16(properties.ascent) + // Typographic Ascent
-        safeString16(properties.descent) + // Typographic Descent
+        safeString16(this.typoAscent) + // Typographic Ascent
+        safeString16(this.typoDescent) + // Typographic Descent
         "\x00\x00" + // Line Gap
         "\xFF\xFF" + // advanceWidthMax
         "\x00\x00" + // minLeftSidebearing
@@ -3235,20 +3348,51 @@ class Font {
     builder.addTable(
       "hmtx",
       (function fontFieldsHmtx() {
+        // The text layer needs to have the widths from the W dict and not
+        // the ones from the font.
+        // TODO: if two different unicodes point to the same glyph id but with
+        // a different width then something will be wrong. A potential fix is
+        // to add a new glyph to the font.
+        //
+        // Chars rendering on the canvas is done char by char so we don't really
+        // care about the widths we're writting here.
         const charstrings = font.charstrings;
         const cffWidths = font.cff ? font.cff.widths : null;
-        let hmtx = "\x00\x00\x00\x00"; // Fake .notdef
-        for (let i = 1, ii = numGlyphs; i < ii; i++) {
-          let width = 0;
-          if (charstrings) {
-            const charstring = charstrings[i - 1];
-            width = "width" in charstring ? charstring.width : 0;
-          } else if (cffWidths) {
-            width = Math.ceil(cffWidths[i] || 0);
+        const hmtx = ["\x00\x00"]; // Fake .notdef
+        const widths = properties.widths;
+        const glyphToWidth = new Array(numGlyphs);
+        const multipleGid = [];
+        for (let i = 0, ii = widths.length; i < ii; i++) {
+          // mapping: charCode to gid.
+          // widths: charCode to width.
+          // i: charCode.
+          const gid = mapping[i];
+          // If glyphToWidth has already an entry for this gid just remove it
+          // and we'll use the width from the font.
+          if (glyphToWidth[gid] !== undefined) {
+            multipleGid.push(gid);
+          } else {
+            glyphToWidth[gid] = widths[i];
           }
-          hmtx += string16(width) + string16(0);
         }
-        return hmtx;
+        for (const gid of multipleGid) {
+          glyphToWidth[gid] = undefined;
+        }
+
+        for (let i = 1, ii = numGlyphs; i < ii; i++) {
+          let width = glyphToWidth[i] || 0;
+          if (!width) {
+            if (charstrings) {
+              const charstring = charstrings[i - 1];
+              width = "width" in charstring ? charstring.width : 0;
+            } else if (cffWidths) {
+              width = Math.ceil(cffWidths[i] || 0);
+            }
+          }
+          hmtx.push(string16(width));
+        }
+        // Each width is followed by a null lsb.
+        return hmtx.join("\x00\x00") + "\x00\x00";
       })()
     );
 

@@ -30,7 +30,7 @@
   text-align: initial;
   inset: 0;
   overflow: hidden;
-  opacity: 0.25;
+  opacity: 1.25;
   line-height: 1;
   text-size-adjust: none;
   forced-color-adjust: none;
@@ -39,11 +39,13 @@
 }
 
 .textLayer :is(span, br) {
-  color: transparent;
+  color: rgba(0, 255, 0, 0.6);
   position: absolute;
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
+  line-height: 1;
+  font-kerning: none;
 }
 
 /* Only necessary in Google Chrome, see issue 14205, and most unfortunately

@@ -1619,6 +1619,7 @@ class PDFPageProxy {
   streamTextContent({
     includeMarkedContent = false,
     disableNormalization = false,
+    loadFonts = false,
   } = {}) {
     const TEXT_CONTENT_CHUNK_SIZE = 100;
 
@@ -1628,6 +1629,7 @@ class PDFPageProxy {
         pageIndex: this._pageIndex,
         includeMarkedContent: includeMarkedContent === true,
         disableNormalization: disableNormalization === true,
+        loadFonts: loadFonts === true,
       },
       {
         highWaterMark: TEXT_CONTENT_CHUNK_SIZE,
@@ -3123,7 +3125,8 @@ class WorkerTransport {
     }
     this.commonObjs.clear();
     if (!keepLoadedFonts) {
-      this.fontLoader.clear();
+      // TODO: fixme
+      // this.fontLoader.clear();
     }
     this.#methodPromises.clear();
     this.filterFactory.destroy(/* keepHCM = */ true);

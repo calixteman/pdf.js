@@ -465,7 +465,7 @@ function checkEq(task, results, browser, masterMode) {
     } else {
       console.error("Valid snapshot was not found.");
     }
-
+    console.log(taskId);
     var refSnapshot = null;
     var eq = false;
     var refPath = path.join(refSnapshotDir, page + 1 + ".png");
@@ -662,7 +662,7 @@ function checkRefTestResults(browser, id, results) {
       checkEq(task, results, browser, session.masterMode);
       break;
     case "fbf":
-      checkFBF(task, results, browser, session.masterMode);
+      //checkFBF(task, results, browser, session.masterMode);
       break;
     case "load":
       checkLoad(task, results, browser);

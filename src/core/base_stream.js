@@ -67,6 +67,15 @@ class BaseStream {
     return (b0 << 8) + b1;
   }
 
+  getInt16() {
+    const b0 = this.getByte();
+    const b1 = this.getByte();
+    if (b0 === -1 || b1 === -1) {
+      return -1;
+    }
+    return ((b0 << 24) | (b1 << 16)) >> 16;
+  }
+
   getInt32() {
     const b0 = this.getByte();
     const b1 = this.getByte();

@@ -708,6 +708,62 @@ class Util {
     ];
   }
 
+  static getGeometricProperties(m) {
+    // In JS the origin is at the top-left, the x-axis is directed to the right
+    // and the y-axis is directed downwards.
+    // In PDF the origin is at the bottom-left, the x-axis is directed to the
+    // right and the y-axis is directed upwards.
+    // The transform matrix from PDF to JS coordinates is: [1, 0, 0, -1]
+    // hence we compose it and its inverse (which is the same) with m, it's why
+    // we've b = -b and c = -c. 
+    // (i.e. [1, 0, 0, -1] * [a, b, c, d] * [1, 0, 0, -1] = [a, -b, -c, d]).
+    const [a, b, c, d] = m;
+    
+    if (b === 0 && c === 0) {
+      if (a === d) {
+        if (a > 0) {
+          // It should be the common case: no rotation and uniform scaling.
+          return {
+            scaleX: 1,
+            scaleY: a,
+          };
+        }
+        return {
+          angle: 0,
+          scaleX: 1,
+          scaleY: -a,
+          transform: [-1, 0, 0, -1],
+        }
+      }
+      if (a === -d) {
+        return {
+          scaleX: 1,
+          scaleY: Math.abs(a),
+          transform: [Math.sign(a), 0, 0, Math.sign(d)],
+        }
+      }
+      const scale = Math.abs(d);
+      return {
+        scaleX: Math.abs(a) / scale,
+        scaleY: scale,
+        transform: [a / scale, 0, 0, d / scale],
+      }
+    }
+
+    const scaleX = Math.hypot(a, b);
+    const scaleY = Math.hypot(c, d);
+    return {
+      scaleX: scaleX / scaleY,
+      scaleY,
+      transform: [
+        a / scaleY,
+        -b / scaleY,
+        -c / scaleY,
+        d / scaleY,
+      ]
+    };
+  }
+
   // For 2d affine transforms
   static applyTransform(p, m) {
     const xt = p[0] * m[0] + p[1] * m[2] + m[4];

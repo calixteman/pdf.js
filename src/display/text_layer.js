@@ -81,6 +81,7 @@ function getCtx(size, isOffscreenCanvasSupported) {
     canvas.width = canvas.height = size;
     ctx = canvas.getContext("2d", { alpha: false });
   }
+  ctx.fontKerning = "none";
 
   return ctx;
 }
@@ -157,50 +158,45 @@ function getAscent(fontFamily, isOffscreenCanvasSupported) {
 function appendText(task, geom, styles) {
   // Initialize all used properties to keep the caches monomorphic.
   const textDiv = document.createElement("span");
+  const tx = Util.transform(task._transform, geom.transform);
+  const {
+    scaleX,
+    scaleY: fontSize,
+    transform,
+  } = Util.getGeometricProperties(geom.transform);
+  const style = styles[geom.fontName];
+
   const textDivProperties = {
     angle: 0,
-    canvasWidth: 0,
     hasText: geom.str !== "",
     hasEOL: geom.hasEOL,
-    fontSize: 0,
+    isFontForHtml: geom.isFontForHtml,
+    fontSize,
+    averageSpaceWidth: geom.averageSpaceWidth || NaN,
+    averageTrackingWidth: geom.averageTrackingWidth || 0,
+    transform,
+    scaleX,
+    width: geom.width,
+    height: geom.height,
+    top: tx[5],
+    left: tx[4],
+    fontAscent: style.ascent,
+    fontDescent: style.descent,
+    textContent: geom.str,
   };
   task._textDivs.push(textDiv);
 
-  const tx = Util.transform(task._transform, geom.transform);
-  let angle = Math.atan2(tx[1], tx[0]);
-  const style = styles[geom.fontName];
   if (style.vertical) {
-    angle += Math.PI / 2;
-  }
-  const fontHeight = Math.hypot(tx[2], tx[3]);
-  const fontAscent =
-    fontHeight * getAscent(style.fontFamily, task._isOffscreenCanvasSupported);
-
-  let left, top;
-  if (angle === 0) {
-    left = tx[4];
-    top = tx[5] - fontAscent;
-  } else {
-    left = tx[4] + fontAscent * Math.sin(angle);
-    top = tx[5] - fontAscent * Math.cos(angle);
+    textDivProperties.angle = Math.PI / 2;
+    textDivProperties.width = geom.height;
+    textDivProperties.height = geom.width;
   }
 
-  const scaleFactorStr = "calc(var(--scale-factor)*";
   const divStyle = textDiv.style;
-  // Setting the style properties individually, rather than all at once,
-  // should be OK since the `textDiv` isn't appended to the document yet.
-  if (task._container === task._rootContainer) {
-    divStyle.left = `${((100 * left) / task._pageWidth).toFixed(2)}%`;
-    divStyle.top = `${((100 * top) / task._pageHeight).toFixed(2)}%`;
-  } else {
-    // We're in a marked content span, hence we can't use percents.
-    divStyle.left = `${scaleFactorStr}${left.toFixed(2)}px)`;
-    divStyle.top = `${scaleFactorStr}${top.toFixed(2)}px)`;
-  }
-  divStyle.fontSize = `${scaleFactorStr}${fontHeight.toFixed(2)}px)`;
-  divStyle.fontFamily = style.fontFamily;
 
-  textDivProperties.fontSize = fontHeight;
+  divStyle.fontFamily = geom.isFontForHtml
+    ? `${geom.fontName}, "Liberation Sans"`//${style.fontFamily}`
+    : style.fontFamily;
 
   // Keeps screen readers from pausing on every new text span.
   textDiv.setAttribute("role", "presentation");
@@ -214,63 +210,194 @@ function appendText(task, geom, styles) {
   if (task._fontInspectorEnabled) {
     textDiv.dataset.fontName = geom.fontName;
   }
-  if (angle !== 0) {
-    textDivProperties.angle = angle * (180 / Math.PI);
-  }
-  // We don't bother scaling single-char text divs, because it has very
-  // little effect on text highlighting. This makes scrolling on docs with
-  // lots of such divs a lot faster.
-  let shouldScaleText = false;
-  if (geom.str.length > 1) {
-    shouldScaleText = true;
-  } else if (geom.str !== " " && geom.transform[0] !== geom.transform[3]) {
-    const absScaleX = Math.abs(geom.transform[0]),
-      absScaleY = Math.abs(geom.transform[3]);
-    // When the horizontal/vertical scaling differs significantly, also scale
-    // even single-char text to improve highlighting (fixes issue11713.pdf).
-    if (
-      absScaleX !== absScaleY &&
-      Math.max(absScaleX, absScaleY) / Math.min(absScaleX, absScaleY) > 1.5
-    ) {
-      shouldScaleText = true;
-    }
-  }
-  if (shouldScaleText) {
-    textDivProperties.canvasWidth = style.vertical ? geom.height : geom.width;
-  }
+
   task._textDivProperties.set(textDiv, textDivProperties);
   if (task._isReadableStream) {
     task._layoutText(textDiv);
   }
 }
 
+function numberToString(value, precision) {
+  if (Number.isInteger(value)) {
+    return value.toString();
+  }
+
+  return value.toFixed(precision);
+}
+
 function layout(params) {
-  const { div, scale, properties, ctx, prevFontSize, prevFontFamily } = params;
+  const {
+    div,
+    properties,
+    ctx,
+    prevFontSize,
+    prevFontFamily,
+    isRootContainer,
+  } = params;
+  const {
+    width,
+    hasText,
+    height,
+    isFontForHtml,
+    fontSize: baseFontSize,
+    fontAscent,
+    fontDescent,
+    transform: boxTransform,
+    scaleX,
+    textContent,
+  } = properties;
+  let { averageTrackingWidth, averageSpaceWidth, angle } = properties;
+
+  if (!hasText) {
+    return;
+  }
+
   const { style } = div;
-  let transform = "";
-  if (properties.canvasWidth !== 0 && properties.hasText) {
-    const { fontFamily } = style;
-    const { canvasWidth, fontSize } = properties;
+  const calcStr = "calc(var(--scale-factor)*";
+  const varStr = "var(--scale-factor)";
+  const { fontFamily } = style;
+  const { left, top } = properties;
+  let ascent, descent, metrics;
+  const scale = isFontForHtml ? 1 : params.scale;
+  const fontSize = baseFontSize * scale;
 
-    if (prevFontSize !== fontSize || prevFontFamily !== fontFamily) {
-      ctx.font = `${fontSize * scale}px ${fontFamily}`;
-      params.prevFontSize = fontSize;
-      params.prevFontFamily = fontFamily;
+  if (prevFontSize !== fontSize || prevFontFamily !== fontFamily) {
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    params.prevFontSize = fontSize;
+    params.prevFontFamily = fontFamily;
+    params.whiteSpaceWidth = NaN;
+  }
+
+  ctx.letterSpacing = ctx.wordSpacing = "0px";
+  //ctx.textRendering = "geometricPrecision";
+
+  if (!isFontForHtml || (fontAscent === 0 && fontDescent === 0)) {
+    // We can't cache the following values because they depend on textContent.
+    metrics = ctx.measureText(textContent);
+    ({ fontBoundingBoxAscent: ascent, fontBoundingBoxDescent: descent } =
+      metrics);
+    if (ascent === undefined) {
+      if (isFontForHtml) {
+        ({
+          actualBoundingBoxAscent: ascent,
+          actualBoundingBoxDescent: descent,
+        } = metrics);
+      } else {
+        ascent = Math.ceil(0.8 * fontSize);
+        descent = Math.ceil(0.2 * fontSize);
+      }
+    }
+  } else {
+    ascent = Math.floor(Math.abs(fontAscent) * baseFontSize);
+    descent = Math.floor(Math.abs(fontDescent) * baseFontSize);
+  }
+
+  const h = (ascent + descent) / scale;
+  const extra = (height - h) / 2;
+  const shift = ascent / scale + extra;
+
+  if (isRootContainer) {
+    style.top = `${numberToString(
+      Math.floor(100 * top) / params.pageHeight,
+      3
+    )}%`;
+    style.left = `${numberToString(
+      Math.floor(100 * left) / params.pageWidth,
+      3
+    )}%`;
+  } else {
+    // We're in a marked content span, hence we can't use percents.
+    style.top = `${calcStr}${numberToString(top, 3)}px)`;
+    style.left = `${calcStr}${numberToString(left, 3)}px)`;
+  }
+
+  const transform = [];
+
+  if (angle && boxTransform) {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const [a, b, c, d] = boxTransform;
+    boxTransform[0] = a * cos - b * sin;
+    boxTransform[1] = a * sin + b * cos;
+    boxTransform[2] = c * cos - d * sin;
+    boxTransform[3] = c * sin + d * cos;
+    angle = 0;
+  }
+
+  if (angle) {
+    transform.push(`rotate(${(180 * angle) / Math.PI}deg)`);
+  }
+  if (boxTransform) {
+    transform.push(`matrix(${boxTransform.join(",")},0,0)`);
+  }
+  transform.push(`translateY(${calcStr}${-shift}px))`);
+
+  if (!isFontForHtml) {
+    const { width: contentWidth } = metrics;
+    if (width > 0 && contentWidth > 0 && textContent !== " ") {
+      transform.push(
+        `scale(${calcStr}${numberToString(
+          (width * scale) / (contentWidth * scaleX),
+          3
+        )}),${varStr})`
+      );
+    } else {
+      transform.push(`scale(${varStr})`);
     }
 
-    // Only measure the width for multi-char text divs, see `appendText`.
-    const { width } = ctx.measureText(div.textContent);
+    style.transform = transform.join(" ");
+    style.fontSize = `${baseFontSize}px`;
 
-    if (width > 0) {
-      transform = `scaleX(${(canvasWidth * scale) / width})`;
+    return;
+  }
+
+  // These two values have computed in taking into account the current transform
+  // so we must rescale them in order to have corret values when compared to the
+  // metrics values obtained with the ctx.measureText method.
+  averageSpaceWidth /= scaleX;
+  averageTrackingWidth /= scaleX;
+  //averageSpaceWidth += 0.5
+  
+  if (!isNaN(averageSpaceWidth) && isNaN(params.whiteSpaceWidth)) {
+    // We must calculate the width of the white space character before setting
+    // the letter-spacing property to avoid an incorrect value to be cached.
+    params.whiteSpaceWidth = ctx.measureText(" ").width;
+    //console.log(ctx.measureText("a a").width, ctx.measureText(" ").width, 2 * ctx.measureText("a").width)
+  }
+
+  if (textContent.length > 1 && Math.abs(averageTrackingWidth) >= 1e-3) {
+    style.letterSpacing = `${calcStr}${averageTrackingWidth}px)`;
+    ctx.letterSpacing = `${averageTrackingWidth}px`;
+  }
+
+  if (!isNaN(averageSpaceWidth)) {
+    const wordSpacing =
+      averageSpaceWidth - params.whiteSpaceWidth - 2 * averageTrackingWidth;
+    console.log(textContent, baseFontSize, wordSpacing, averageSpaceWidth, params.whiteSpaceWidth, averageTrackingWidth)
+
+    if (Math.abs(wordSpacing) >= 1e-3) {
+      style.wordSpacing = `${calcStr}${wordSpacing}px)`;
+      ctx.wordSpacing = `${wordSpacing}px`;
     }
   }
-  if (properties.angle !== 0) {
-    transform = `rotate(${properties.angle}deg) ${transform}`;
+
+  //metrics = ctx.measureText(textContent);
+  if (false &&textContent !== " " && Math.abs(metrics.width * scaleX - width) > 2) {
+    const w1 = ctx.measureText("A").width;
+    const w2 = ctx.measureText(`AAA${textContent}AAA`).width;
+    style.border = "10px solid red";
+    console.error(
+      "___" + textContent + "___",
+      metrics.width * scaleX,
+      width,
+      ctx.font,
+      w2 - 6 * w1
+    );
+    // throw new Error(`WTF: textContent=${textContent}, textWidth=${metrics.width * scaleX}, width=${width}, diff=${Math.abs(metrics.width * scaleX - width)}`)
   }
-  if (transform.length > 0) {
-    style.transform = transform;
-  }
+
+  style.transform = transform.join(" ");
+  style.fontSize = `${calcStr}${baseFontSize}px)`;
 }
 
 function render(task) {
@@ -318,25 +445,31 @@ class TextLayerRenderTask {
     this._textDivProperties = textDivProperties || new WeakMap();
     this._canceled = false;
     this._capability = new PromiseCapability();
-    this._layoutTextParams = {
-      prevFontSize: null,
-      prevFontFamily: null,
-      div: null,
-      scale: viewport.scale * (globalThis.devicePixelRatio || 1),
-      properties: null,
-      ctx: getCtx(0, isOffscreenCanvasSupported),
-    };
     const { pageWidth, pageHeight, pageX, pageY } = viewport.rawDims;
     this._transform = [1, 0, 0, -1, -pageX, pageY + pageHeight];
     this._pageWidth = pageWidth;
     this._pageHeight = pageHeight;
+
+    this._layoutTextParams = {
+      prevFontSize: null,
+      prevFontFamily: null,
+      div: null,
+      scale: globalThis.devicePixelRatio || 1,
+      properties: null,
+      ctx: getCtx(0, isOffscreenCanvasSupported),
+      pageHeight,
+      pageWidth,
+    };
 
     setLayerDimensions(container, viewport);
 
     // Always clean-up the temporary canvas once rendering is no longer pending.
     this._capability.promise
       .finally(() => {
+        const canvas = this._layoutTextParams.ctx.canvas;
+        canvas.width = canvas.height = 0;
         this._layoutTextParams = null;
+        this._textDivProperties = null;
       })
       .catch(() => {
         // Avoid "Uncaught promise" messages in the console.
@@ -401,6 +534,8 @@ class TextLayerRenderTask {
     const textDivProperties = (this._layoutTextParams.properties =
       this._textDivProperties.get(textDiv));
     this._layoutTextParams.div = textDiv;
+    this._layoutTextParams.isRootContainer =
+      this._container === this._rootContainer;
     layout(this._layoutTextParams);
 
     if (textDivProperties.hasText) {
@@ -493,35 +628,9 @@ function renderTextLayer(params) {
  * @param {TextLayerUpdateParameters} params
  * @returns {undefined}
  */
-function updateTextLayer({
-  container,
-  viewport,
-  textDivs,
-  textDivProperties,
-  isOffscreenCanvasSupported,
-  mustRotate = true,
-  mustRescale = true,
-}) {
+function updateTextLayer({ container, viewport, mustRotate = true }) {
   if (mustRotate) {
     setLayerDimensions(container, { rotation: viewport.rotation });
-  }
-
-  if (mustRescale) {
-    const ctx = getCtx(0, isOffscreenCanvasSupported);
-    const scale = viewport.scale * (globalThis.devicePixelRatio || 1);
-    const params = {
-      prevFontSize: null,
-      prevFontFamily: null,
-      div: null,
-      scale,
-      properties: null,
-      ctx,
-    };
-    for (const div of textDivs) {
-      params.properties = textDivProperties.get(div);
-      params.div = div;
-      layout(params);
-    }
   }
 }
 

@@ -981,7 +981,7 @@ function setLayerDimensions(
   if (viewport instanceof PageViewport) {
     const { pageWidth, pageHeight } = viewport.rawDims;
     const { style } = div;
-    const useRound = FeatureTest.isCSSRoundSupported;
+    const useRound = false;//FeatureTest.isCSSRoundSupported;
 
     const w = `var(--scale-factor) * ${pageWidth}px`,
       h = `var(--scale-factor) * ${pageHeight}px`;

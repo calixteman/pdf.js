@@ -261,7 +261,7 @@ class Rasterize {
     }
   }
 
-  static async textLayer(ctx, viewport, textContent) {
+  static async textLayer(ctx, viewport, textContent, fontRules) {
     try {
       const { svg, foreignObject, style, div } = this.createContainer(viewport);
       div.className = "textLayer";
@@ -271,7 +271,7 @@ class Rasterize {
 
       const [common, overrides] = await this.textStylePromise;
       style.textContent =
-        `${common}\n${overrides}\n` +
+        `${common}\n${overrides}\n${fontRules}\n` +
         `:root { --scale-factor: ${viewport.scale} }`;
 
       // Rendering text layer as HTML.
@@ -470,19 +470,22 @@ class Driver {
         this._nextTask();
         return;
       }
+      if (task.type === "eq") {
+        task.type = "text";
+      }
 
       this._log('Loading file "' + task.file + '"\n');
 
       try {
-        let xfaStyleElement = null;
-        if (task.enableXfa) {
+        let styleElement = null;
+        if (task.enableXfa || task.type === "text") {
           // Need to get the font definitions to inject them in the SVG.
           // So we create this element and those definitions will be
           // appended in font_loader.js.
-          xfaStyleElement = document.createElement("style");
+          styleElement = task.styleElement = document.createElement("style");
           document.documentElement
             .getElementsByTagName("head")[0]
-            .append(xfaStyleElement);
+            .append(styleElement);
         }
         const isOffscreenCanvasSupported =
           task.isOffscreenCanvasSupported === false ? false : undefined;
@@ -498,7 +501,7 @@ class Driver {
           useWorkerFetch: task.useWorkerFetch,
           enableXfa: task.enableXfa,
           isOffscreenCanvasSupported,
-          styleElement: xfaStyleElement,
+          styleElement,
         });
         let promise = loadingTask.promise;
 
@@ -559,7 +562,7 @@ class Driver {
           async doc => {
             if (task.enableXfa) {
               task.fontRules = "";
-              for (const rule of xfaStyleElement.sheet.cssRules) {
+              for (const rule of styleElement.sheet.cssRules) {
                 task.fontRules += rule.cssText + "\n";
               }
             }
@@ -747,12 +750,18 @@ class Driver {
                 .getTextContent({
                   includeMarkedContent: true,
                   disableNormalization: true,
+                  loadFonts: true,
                 })
                 .then(function (textContent) {
+                  let fontRules = "";
+                  for (const rule of task.styleElement.sheet.cssRules) {
+                    fontRules += rule.cssText + "\n";
+                  }
                   return Rasterize.textLayer(
                     textLayerContext,
                     viewport,
-                    textContent
+                    textContent,
+                    fontRules
                   );
                 });
             } else {
