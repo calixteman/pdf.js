@@ -2943,4 +2943,9 @@ class AnnotationLayer {
   }
 }
 
-export { AnnotationLayer, FreeTextAnnotationElement, InkAnnotationElement };
+export {
+  AnnotationLayer,
+  FreeTextAnnotationElement,
+  InkAnnotationElement,
+  StampAnnotationElement,
+};

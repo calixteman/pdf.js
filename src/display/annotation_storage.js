@@ -174,10 +174,13 @@ class AnnotationStorage {
       return null;
     }
     const clone = new Map();
+    const context = Object.create(null);
 
     for (const [key, val] of this.#storage) {
       const serialized =
-        val instanceof AnnotationEditor ? val.serialize() : val;
+        val instanceof AnnotationEditor
+          ? val.serialize(/* isForCopying = */ false, context)
+          : val;
       if (serialized) {
         clone.set(key, serialized);
       }

@@ -60,6 +60,127 @@ class IdManager {
 }
 
 /**
+ * Class to manage the images used by the editors.
+ * The main idea is to try to minimize the memory used by the images.
+ * The images are cached and reused when possible
+ * We use a refCounter to know when an image is not used anymore but we need to
+ * be able to restore an image after a remove+undo, so we keep a file reference
+ * or an url one.
+ */
+class ImageManager {
+  #baseId = window.crypto.randomUUID();
+
+  #id = 0;
+
+  #cache = null;
+
+  async getFromFile(file) {
+    const { lastModified, name, size, type } = file;
+    const key = `${lastModified}_${name}_${size}_${type}`;
+    this.#cache ||= new Map();
+    let data = this.#cache.get(key);
+    if (data === null) {
+      return data;
+    }
+    if (data?.bitmap) {
+      data.refCounter += 1;
+      return data;
+    }
+
+    try {
+      data ||= {
+        bitmap: null,
+        id: `image_${this.#baseId}_${this.#id++}`,
+        file,
+        refCounter: 0,
+      };
+      data.bitmap = await createImageBitmap(file);
+      data.refCounter = 1;
+    } catch (e) {
+      console.error(e);
+      data = null;
+    }
+    this.#cache.set(key, data);
+    if (data) {
+      this.#cache.set(data.id, data);
+    }
+    return data;
+  }
+
+  async getFromUrl(url) {
+    this.#cache ||= new Map();
+    const key = url;
+    let data = this.#cache.get(key);
+    if (data === null) {
+      return data;
+    }
+    if (data?.bitmap) {
+      data.refCounter += 1;
+      return data;
+    }
+
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      data ||= {
+        bitmap: null,
+        id: `image_${this.#baseId}_${this.#id++}`,
+        url,
+        refCounter: 0,
+      };
+      data.bitmap = await createImageBitmap(blob);
+      data.refCounter = 1;
+    } catch (e) {
+      console.error(e);
+      data = null;
+    }
+    this.#cache.set(key, data);
+    if (data) {
+      this.#cache.set(data.id, data);
+    }
+    return data;
+  }
+
+  async getFromId(id) {
+    this.#cache ||= new Map();
+    const data = this.#cache.get(id);
+    if (!data) {
+      return null;
+    }
+    if (data.bitmap) {
+      data.refCounter += 1;
+      return data;
+    }
+
+    if (data.file) {
+      return this.getFromFile(data.file);
+    }
+    return this.getFromUrl(data.url);
+  }
+
+  deleteId(id) {
+    this.#cache ||= new Map();
+    const data = this.#cache.get(id);
+    if (!data) {
+      return;
+    }
+    data.refCounter -= 1;
+    if (data.refCounter !== 0) {
+      return;
+    }
+    data.bitmap = null;
+  }
+
+  // We can use the id only if it belongs this manager.
+  // We must take care of having the right manager because we can copy/paste
+  // some images from other documents, hence it'd be a pity to use an id from an
+  // other manager.
+  isValidId(id) {
+    return id.startsWith(`image_${this.#baseId}_`);
+  }
+}
+
+/**
  * Class to handle undo/redo.
  * Commands are just saved in a buffer.
  * If we hit some memory issues we could likely use a circular buffer.
@@ -1144,6 +1265,10 @@ class AnnotationEditorUIManager {
    */
   getMode() {
     return this.#mode;
+  }
+
+  get imageManager() {
+    return shadow(this, "imageManager", new ImageManager());
   }
 }
 

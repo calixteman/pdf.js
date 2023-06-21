@@ -494,8 +494,9 @@ class AnnotationEditor {
    *
    * To implement in subclasses.
    * @param {boolean} isForCopying
+   * @param {Object} [context]
    */
-  serialize(_isForCopying = false) {
+  serialize(_isForCopying = false, _context = null) {
     unreachable("An editor must be serializable");
   }
 
