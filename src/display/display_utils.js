@@ -274,8 +274,256 @@ class DOMFilterFactory extends BaseFilterFactory {
     return this.#hcmUrl;
   }
 
+  addStampFilter1() {
+    const id = `g_stamp_filter`;
+    const filter = this.#document.createElementNS(
+      SVG_NS,
+      "filter",
+      SVG_NS
+    );
+    filter.setAttribute("id", id);
+    filter.setAttribute("color-interpolation-filters", "sRGB");
+    let feGaussianBlur, feMorphology,feComponentTransfer, feConvolveMatrix, table, feFuncR, feFuncG, feFuncB;
+
+    const map = new Array(256);
+    for (let i = 0; i <= 255; i++) {
+      const x = i / 255;
+      map[i] = x <= 0.03928 ? 0*x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    }
+    table = map.join(",");
+    feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    //filter.append(feComponentTransfer);
+    this.#appendFeFunc(feComponentTransfer, "feFuncR", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncG", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncB", table);
+
+    feGaussianBlur = this.#document.createElementNS(
+      SVG_NS,
+      "feGaussianBlur"
+    );
+    feGaussianBlur.setAttribute("stdDeviation", 1);
+    //filter.append(feGaussianBlur);
+
+    for (let i = 0; i < 10; i++) {
+    feMorphology = this.#document.createElementNS(
+      SVG_NS,
+      "feMorphology"
+    );
+    feMorphology.setAttribute("operator", "erode");
+    feMorphology.setAttribute("radius", 1);
+    filter.append(feMorphology);
+
+    feMorphology = this.#document.createElementNS(
+      SVG_NS,
+      "feMorphology"
+    );
+    feMorphology.setAttribute("operator", "dilate");
+    feMorphology.setAttribute("radius", 1);
+    filter.append(feMorphology);
+    }
+
+    feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    //filter.append(feComponentTransfer);
+    feFuncR = this.#document.createElementNS(
+      SVG_NS,
+      "feFuncR"
+    );
+    feComponentTransfer.append(feFuncR);
+    feFuncR.setAttribute("type", "gamma");
+    feFuncR.setAttribute("exponent", 5);
+    feFuncR.setAttribute("amplitude", 1);
+    feFuncG = this.#document.createElementNS(
+      SVG_NS,
+      "feFuncG"
+    );
+    feComponentTransfer.append(feFuncG);
+    feFuncG.setAttribute("type", "gamma");
+    feFuncG.setAttribute("exponent", 5);
+    feFuncG.setAttribute("amplitude", 1);
+    feFuncB = this.#document.createElementNS(
+      SVG_NS,
+      "feFuncB"
+    );
+    feComponentTransfer.append(feFuncB);
+    feFuncB.setAttribute("type", "gamma");
+    feFuncB.setAttribute("exponent", 5);
+    feFuncB.setAttribute("amplitude", 1);
+
+    feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    //filter.append(feComponentTransfer);
+    table = "0,1";//("0,".repeat(128) +"1,".repeat(128)).slice(0, -1);
+    this.#appendFeFunc(feComponentTransfer, "feFuncR", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncG", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncB", table);
+
+    feMorphology = this.#document.createElementNS(
+      SVG_NS,
+      "feMorphology"
+    );
+    feMorphology.setAttribute("operator", "dilate");
+    feMorphology.setAttribute("radius", 1);
+    //filter.append(feMorphology);
+
+
+    this.#defs.append(filter);
+  }
+
+  addStampFilter() {
+    const id = `g_stamp_filter`;
+    const filter = this.#document.createElementNS(
+      SVG_NS,
+      "filter",
+      SVG_NS
+    );
+    filter.setAttribute("id", id);
+    filter.setAttribute("color-interpolation-filters", "sRGB");
+    let feGaussianBlur, feMorphology,feComponentTransfer, feConvolveMatrix, table;
+
+    feGaussianBlur = this.#document.createElementNS(
+      SVG_NS,
+      "feGaussianBlur"
+    );
+    feGaussianBlur.setAttribute("stdDeviation", 3);
+    //filter.append(feGaussianBlur);
+
+    feConvolveMatrix = this.#document.createElementNS(
+      SVG_NS,
+      "feConvolveMatrix"
+    );
+    feConvolveMatrix.setAttribute("type", "matrix");
+    const x = 1;
+    feConvolveMatrix.setAttribute(
+      "kernelMatrix",
+      [[x, x, x],
+       [x, -x * 8, x],
+       [x, x, x]].flat().join(" ")
+    );
+    //feConvolveMatrix.setAttribute("divisor", 16);
+    //feConvolveMatrix.setAttribute("bias", 0.5);
+    feConvolveMatrix.setAttribute("order", 3);
+    feConvolveMatrix.setAttribute("preserveAlpha", true);
+    //filter.append(feConvolveMatrix);
+
+    for (let i = 0; i < 1; i++) {
+  
+      feGaussianBlur = this.#document.createElementNS(
+      SVG_NS,
+      "feGaussianBlur"
+    );
+    feGaussianBlur.setAttribute("stdDeviation", 1);
+    //filter.append(feGaussianBlur);
+
+    
+    feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    filter.append(feComponentTransfer);
+    table = ("0,".repeat(128) +"1,".repeat(128)).slice(0, -1);
+    this.#appendFeFunc(feComponentTransfer, "feFuncR", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncG", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncB", table);
+
+    feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    ///filter.append(feComponentTransfer);
+    feComponentTransfer.setAttribute("exponent", 100);
+    feComponentTransfer.setAttribute("amplitude", 10);
+
+
+    feMorphology = this.#document.createElementNS(
+      SVG_NS,
+      "feMorphology"
+    );
+    feMorphology.setAttribute("operator", "erode");
+    feMorphology.setAttribute("radius", 2);
+    filter.append(feMorphology);
+
+    feGaussianBlur = this.#document.createElementNS(
+      SVG_NS,
+      "feGaussianBlur"
+    );
+    feGaussianBlur.setAttribute("stdDeviation", 3);
+    //filter.append(feGaussianBlur);
+
+    feMorphology = this.#document.createElementNS(
+      SVG_NS,
+      "feMorphology"
+    );
+    feMorphology.setAttribute("operator", "erode");
+    feMorphology.setAttribute("radius", 1);
+    //filter.append(feMorphology);
+
+    }
+
+    feMorphology = this.#document.createElementNS(
+      SVG_NS,
+      "feMorphology"
+    );
+    feMorphology.setAttribute("operator", "erode");
+    feMorphology.setAttribute("radius", 1);
+    //filter.append(feMorphology);
+
+    feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    //filter.append(feComponentTransfer);
+    feComponentTransfer.setAttribute("exponent", 200);
+    feComponentTransfer.setAttribute("amplitude", 1);
+    //let table = ("0,".repeat(5) +"1,".repeat(251)).slice(0, -1);
+    //this.#appendFeFunc(feComponentTransfer, "feFuncR", table);
+    //this.#appendFeFunc(feComponentTransfer, "feFuncG", table);
+    //this.#appendFeFunc(feComponentTransfer, "feFuncB", table);
+
+    feGaussianBlur = this.#document.createElementNS(
+      SVG_NS,
+      "feGaussianBlur"
+    );
+    feGaussianBlur.setAttribute("stdDeviation", 5);
+    //filter.append(feGaussianBlur);
+
+    feConvolveMatrix = this.#document.createElementNS(
+      SVG_NS,
+      "feConvolveMatrix"
+    );
+    feConvolveMatrix.setAttribute("type", "matrix");
+    feConvolveMatrix.setAttribute(
+      "kernelMatrix",
+      [[4, 4, 4],
+       [4, -32, 4],
+       [4, 4, 4]].flat().join(" ")
+    );
+    feConvolveMatrix.setAttribute("order", 3);
+    feConvolveMatrix.setAttribute("preserveAlpha", true);
+    //filter.append(feConvolveMatrix);
+
+    /*feComponentTransfer = this.#document.createElementNS(
+      SVG_NS,
+      "feComponentTransfer"
+    );
+    filter.append(feComponentTransfer);
+    table = ("1,".repeat(220) +"0,".repeat(35)).slice(0, -1);
+    this.#appendFeFunc(feComponentTransfer, "feFuncR", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncG", table);
+    this.#appendFeFunc(feComponentTransfer, "feFuncB", table);*/
+
+    this.#defs.append(filter);
+  }
+
   destroy(keepHCM = false) {
-    if (keepHCM && this.#hcmUrl) {
+    if (true) {//keepHCM && this.#hcmUrl) {
       return;
     }
     if (this.#_defs) {

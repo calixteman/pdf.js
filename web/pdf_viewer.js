@@ -883,6 +883,7 @@ class PDFViewer {
         // Ensure that the various layers always get the correct initial size,
         // see issue 15795.
         this.viewer.style.setProperty("--scale-factor", viewport.scale);
+        pdfDocument.filterFactory.addStampFilter();
 
         for (let pageNum = 1; pageNum <= pagesCount; ++pageNum) {
           const pageView = new PDFPageView({
