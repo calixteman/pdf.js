@@ -22,6 +22,9 @@
   --inline-end: right;
   /*#endif*/
 
+  --focus-ring-color: #0060df;
+  --focus-ring-outline: 2px solid var(--focus-ring-color);
+
   --sidebar-width: 200px;
   --sidebar-transition-duration: 200ms;
   --sidebar-transition-timing-function: ease;
@@ -133,6 +136,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --focus-ring-color: #0df;
     --main-color: rgb(249 249 250);
     --body-bg-color: rgb(42 42 46);
     --progressBar-color: rgb(0 96 223);
@@ -175,6 +179,7 @@
 
 @media screen and (forced-colors: active) {
   :root {
+    --focus-ring-color: ButtonBorder;
     --button-hover-color: Highlight;
     --doorhanger-hover-bg-color: Highlight;
     --toolbar-icon-opacity: 1;
@@ -323,8 +328,11 @@ body {
 :is(.toolbar, .editorParamsToolbar, .findbar, #sidebarContainer)
   :is(input, button, select),
 .secondaryToolbar :is(input, button, a, select) {
-  outline: none;
   font: message-box;
+
+  &:focus-visible {
+    outline: var(--focus-ring-outline);
+  }
 }
 
 #toolbarContainer {
@@ -455,56 +463,65 @@ body {
   inset-inline-start: 64px;
   min-width: 300px;
   background-color: var(--toolbar-bg-color);
-}
-.findbar > div {
-  height: 32px;
-}
-.findbar > div#findbarInputContainer {
-  margin-inline-end: 4px;
-}
-.findbar.wrapContainers > div,
-.findbar.wrapContainers > div#findbarMessageContainer > * {
-  clear: both;
-}
-.findbar.wrapContainers > div#findbarMessageContainer {
-  height: auto;
-}
 
-.findbar input[type="checkbox"] {
-  pointer-events: none;
-}
-
-.findbar label {
-  user-select: none;
-}
-
-.findbar label:hover,
-.findbar input:focus-visible + label {
-  color: var(--toggled-btn-color);
-  background-color: var(--button-hover-color);
-}
-
-.findbar .toolbarField[type="checkbox"]:checked + .toolbarLabel {
-  background-color: var(--toggled-btn-bg-color) !important;
-  color: var(--toggled-btn-color);
-}
-
-#findInput {
-  width: 200px;
-
-  /*#if !MOZCENTRAL*/
-  &::-webkit-input-placeholder {
-    color: rgb(191 191 191);
+  > div {
+    height: 32px;
   }
-  /*#endif*/
-  &::placeholder {
-    font-style: normal;
+
+  > div#findbarInputContainer {
+    margin-inline-end: 4px;
   }
-  .loadingInput:has(> &[data-status="pending"])::after {
-    visibility: visible;
+
+  &.wrapContainers {
+    > div,
+    > div#findbarMessageContainer > * {
+      clear: both;
+    }
+
+    > div#findbarMessageContainer {
+      height: auto;
+    }
   }
-  &[data-status="notFound"] {
-    background-color: rgb(255 102 102);
+
+  input[type="checkbox"] {
+    pointer-events: none;
+  }
+
+  label {
+    user-select: none;
+  }
+
+  label:hover,
+  input:focus-visible + label {
+    color: var(--toggled-btn-color);
+    background-color: var(--button-hover-color);
+  }
+
+  input:focus-visible + label {
+    outline: var(--focus-ring-outline);
+  }
+
+  .toolbarField[type="checkbox"]:checked + .toolbarLabel {
+    background-color: var(--toggled-btn-bg-color) !important;
+    color: var(--toggled-btn-color);
+  }
+
+  #findInput {
+    width: 200px;
+    /*#if !MOZCENTRAL*/
+    &::-webkit-input-placeholder {
+      color: rgb(191 191 191);
+    }
+    /*#endif*/
+    &::placeholder {
+      font-style: normal;
+    }
+    .loadingInput:has(> &[data-status="pending"])::after {
+      visibility: visible;
+    }
+    &[data-status="notFound"] {
+      background-color: rgb(255 102 102);
+    }
   }
 }
 
@@ -706,15 +723,18 @@ body {
   background: none;
   width: 28px;
   height: 28px;
-  outline: none;
-}
 
-.dialogButton:is(:hover, :focus-visible) {
-  background-color: var(--dialog-button-hover-bg-color);
-}
+  &:is(:hover, :focus-visible) {
+    background-color: var(--dialog-button-hover-bg-color);
 
-.dialogButton:is(:hover, :focus-visible) > span {
-  color: var(--dialog-button-hover-color);
+    > span {
+      color: var(--dialog-button-hover-color);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring-outline);
+  }
 }
 
 .toolbarButton > span {
@@ -1146,10 +1166,6 @@ a:is(.toolbarButton, .secondaryToolbarButton)[href="#"] {
   }
 }
 
-.toolbarField:focus {
-  border-color: #0a84ff;
-}
-
 .toolbarLabel {
   min-width: 16px;
   padding: 7px;
@@ -1254,6 +1270,10 @@ a:focus > .thumbnail > .thumbnailImage,
   user-select: none;
   white-space: normal;
   cursor: pointer;
+
+  &:focus-visible {
+    outline: var(--focus-ring-outline);
+  }
 }
 
 #layersView .treeItem > a * {
