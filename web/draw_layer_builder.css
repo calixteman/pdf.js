@@ -17,6 +17,16 @@
   svg {
     transform: none;
 
+    &.selection {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      mix-blend-mode: multiply;
+    }
+
     &[data-main-rotation="90"] {
       mask,
       use:not(.clip, .mask) {

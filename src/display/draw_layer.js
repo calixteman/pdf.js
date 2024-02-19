@@ -30,8 +30,16 @@ class DrawLayer {
 
   #toUpdate = new Map();
 
+  #selectionPath = null;
+
+  #selectionRoot = null;
+
   constructor({ pageIndex }) {
     this.pageIndex = pageIndex;
+    document.addEventListener(
+      "selectionchange",
+      this.#selectionChange.bind(this)
+    );
   }
 
   setParent(parent) {
@@ -61,6 +69,43 @@ class DrawLayer {
     style.left = `${100 * x}%`;
     style.width = `${100 * width}%`;
     style.height = `${100 * height}%`;
+  }
+
+  #selectionChange() {
+    let path = this.#selectionPath;
+    if (!path) {
+      const root = (this.#selectionRoot = this.#createSVG());
+      root.classList.add("selection");
+      path = this.#selectionPath = DrawLayer._svgFactory.createElement("path");
+      root.append(path);
+      path.setAttribute("fill", "rgba(255, 0, 0, 1)");
+    }
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0 || selection.isCollapsed) {
+      path.setAttribute("d", "");
+      return;
+    }
+    const textLayer = this.#parent.parentElement.querySelector(".textLayer");
+    const { x, y, width, height } = textLayer.getBoundingClientRect();
+    this.#selectionRoot.setAttribute("viewBox", `${x} ${y} ${width} ${height}`);
+
+    const buffer = [];
+    for (let i = 0; i < selection.rangeCount; i++) {
+      const range = selection.getRangeAt(i);
+      if (!textLayer.contains(range.startContainer)) {
+        continue;
+      }
+
+      const rects = range.getClientRects();
+      for (const { x, y, width, height } of rects) {
+        if (width === 0 || height === 0) {
+          continue;
+        }
+        buffer.push(`M${x},${y}h${width}v${height}h${-width}Z`);
+      }
+    }
+
+    path.setAttribute("d", buffer.join(""));
   }
 
   #createSVG(box) {

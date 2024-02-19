@@ -20,7 +20,12 @@
 // eslint-disable-next-line max-len
 /** @typedef {import("./text_accessibility.js").TextAccessibilityManager} TextAccessibilityManager */
 
-import { normalizeUnicode, renderTextLayer, updateTextLayer } from "pdfjs-lib";
+import {
+  ColorPicker,
+  normalizeUnicode,
+  renderTextLayer,
+  updateTextLayer,
+} from "pdfjs-lib";
 import { removeNullCharacters } from "./ui_utils.js";
 
 /**
@@ -176,6 +181,18 @@ class TextLayerBuilder {
     this.#textContentSource = source;
   }
 
+  static #caretPositionFromPoint(x, y) {
+    if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
+      if (document.caretPositionFromPoint) {
+        return document.caretPositionFromPoint(x, y);
+      }
+      const { startContainer: offsetNode, startOffset: offset } =
+        document.caretRangeFromPoint(x, y);
+      return { offsetNode, offset };
+    }
+    return document.caretPositionFromPoint(x, y);
+  }
+
   /**
    * Improves text selection by adding an additional div where the mouse was
    * clicked. This reduces flickering of the content if the mouse is slowly
@@ -184,12 +201,12 @@ class TextLayerBuilder {
   #bindMouse() {
     const { div } = this;
 
-    div.addEventListener("mousedown", evt => {
+    /* div.addEventListener("mousedown", evt => {
       const end = div.querySelector(".endOfContent");
       if (!end) {
         return;
       }
-      if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
+      if (false) {//typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
         // On non-Firefox browsers, the selection will feel better if the height
         // of the `endOfContent` div is adjusted to start at mouse click
         // location. This avoids flickering when the selection moves up.
@@ -218,6 +235,47 @@ class TextLayerBuilder {
         end.style.top = "";
       }
       end.classList.remove("active");
+    }); */
+
+    div.addEventListener("mousedown", evt => {
+      this._down = true;
+      evt.preventDefault();
+      const { x, y } = evt;
+      const el = document.elementFromPoint(x, y);
+      console.log(el === evt.target);
+      if (el.getAttribute("role") !== "presentation") {
+        return;
+      }
+      const selection = document.getSelection();
+      const { offsetNode, offset } = TextLayerBuilder.#caretPositionFromPoint(
+        x,
+        y
+      );
+      selection.setPosition(offsetNode, offset);
+      // console.log("DOWN", selection)
+    });
+
+    div.addEventListener("mousemove", evt => {
+      if (!this._down) {
+        return;
+      }
+      evt.preventDefault();
+      const { x, y } = evt;
+      const el = document.elementFromPoint(x, y);
+      if (el.getAttribute("role") !== "presentation") {
+        return;
+      }
+      const selection = document.getSelection();
+      const { offsetNode, offset } = TextLayerBuilder.#caretPositionFromPoint(
+        x,
+        y
+      );
+      selection.extend(offsetNode, offset);
+      // console.log("MOVE", selection)
+    });
+
+    div.addEventListener("mouseup", evt => {
+      this._down = false;
     });
 
     div.addEventListener("copy", event => {
