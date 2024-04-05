@@ -356,6 +356,7 @@ class FreeTextEditor extends AnnotationEditor {
 
   /** @inheritdoc */
   onceAdded() {
+    // TODO: calixte: this.width == 0
     if (this.width) {
       this.#cheatInitialRect();
       // The editor was created in using ctrl+c.
@@ -409,11 +410,15 @@ class FreeTextEditor extends AnnotationEditor {
       // we just insert it in the DOM, get its bounding box and then remove it.
       const { currentLayer, div } = this;
       const savedDisplay = div.style.display;
+      const savedVisibility = div.classList.contains("hidden");
+      div.classList.remove("hidden");
       div.style.display = "hidden";
       currentLayer.div.append(this.div);
       rect = div.getBoundingClientRect();
+      console.log("RECT", rect)
       div.remove();
       div.style.display = savedDisplay;
+      div.classList.toggle("hidden", savedVisibility);
     }
 
     // The dimensions are relative to the rotation of the page, hence we need to
@@ -751,6 +756,7 @@ class FreeTextEditor extends AnnotationEditor {
 
   /** @inheritdoc */
   static deserialize(data, parent, uiManager) {
+    console.trace("COUOUCO")
     let initialData = null;
     if (data instanceof FreeTextAnnotationElement) {
       const {
@@ -779,7 +785,7 @@ class FreeTextEditor extends AnnotationEditor {
         value: textContent.join("\n"),
         position: textPosition,
         pageIndex: pageNumber - 1,
-        rect,
+        rect: rect.slice(0),
         rotation,
         id,
         deleted: false,
@@ -845,6 +851,7 @@ class FreeTextEditor extends AnnotationEditor {
 
   #hasElementChanged(serialized) {
     const { value, fontSize, color, rect, pageIndex } = this.#initialData;
+    console.log("serialized", structuredClone(this.#initialData), structuredClone(serialized))
 
     return (
       serialized.value !== value ||
@@ -872,6 +879,41 @@ class FreeTextEditor extends AnnotationEditor {
 
     const padding = FreeTextEditor._internalPadding * this.parentScale;
     this.#initialData.rect = this.getRect(padding, padding);
+  }
+
+  /** @inheritdoc */
+  renderAnnotationElement(annotation) {
+    const content = super.renderAnnotationElement(annotation);
+    if (this.deleted) {
+      return content;
+    }
+    const { style } = content;
+    style.fontSize = `calc(${this.#fontSize}px * var(--scale-factor))`;
+    style.color = this.#color;
+
+    content.replaceChildren();
+    for (const line of this.#content.split("\n")) {
+      const div = document.createElement("div");
+      div.append(
+        line ? document.createTextNode(line) : document.createElement("br")
+      );
+      content.append(div);
+    }
+
+    const padding = FreeTextEditor._internalPadding * this.parentScale;
+    annotation.update({
+      rect: this.getRect(padding, padding),
+      popupContent: !annotation.data.popupRef
+        ? super.makePopupContent(this.#content, this.#fontSize, this.#color)
+        : null,
+    });
+
+    return content;
+  }
+
+  resetAnnotationElement(annotation) {
+    super.resetAnnotationElement(annotation);
+    annotation.reset();
   }
 }
 

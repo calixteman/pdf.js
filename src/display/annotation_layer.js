@@ -20,6 +20,8 @@
 // eslint-disable-next-line max-len
 /** @typedef {import("../../web/interfaces").IDownloadManager} IDownloadManager */
 /** @typedef {import("../../web/interfaces").IPDFLinkService} IPDFLinkService */
+// eslint-disable-next-line max-len
+/** @typedef {import("../src/display/editor/tools.js").AnnotationEditorUIManager} AnnotationEditorUIManager */
 
 import {
   AnnotationBorderStyleType,
@@ -157,7 +159,11 @@ class AnnotationElementFactory {
 }
 
 class AnnotationElement {
+  #updates = null;
+
   #hasBorder = false;
+
+  #popupElement = null;
 
   constructor(
     parameters,
@@ -197,6 +203,55 @@ class AnnotationElement {
     return AnnotationElement._hasPopupData(this.data);
   }
 
+  update(params) {
+    if (!this.container) {
+      return;
+    }
+
+    this.#updates ||= {
+      rect: this.data.rect.slice(0),
+    };
+
+    const { rect } = params;
+
+    if (rect) {
+      this.#setRect(rect);
+    }
+
+    this.#popupElement?.popup.update(params);
+  }
+
+  reset() {
+    if (!this.#updates) {
+      return;
+    }
+    this.#setRect(this.#updates.rect);
+    this.#popupElement?.popup.reset();
+    this.#updates = null;
+  }
+
+  #setRect(rect) {
+    const {
+      container: { style },
+      data: { rect: currentRect, rotation },
+      parent: {
+        viewport: {
+          rawDims: { pageWidth, pageHeight, pageX, pageY },
+        },
+      },
+    } = this;
+    currentRect?.splice(0, 4, ...rect);
+    const { width, height } = getRectDims(rect);
+    style.left = `${(100 * (rect[0] - pageX)) / pageWidth}%`;
+    style.top = `${(100 * (pageHeight - rect[3] + pageY)) / pageHeight}%`;
+    if (rotation === 0) {
+      style.width = `${(100 * width) / pageWidth}%`;
+      style.height = `${(100 * height) / pageHeight}%`;
+    } else {
+      this.setRotation(rotation);
+    }
+  }
+
   /**
    * Create an empty container for the annotation's HTML element.
    *
@@ -216,13 +271,14 @@ class AnnotationElement {
     if (!(this instanceof WidgetAnnotationElement)) {
       container.tabIndex = DEFAULT_TAB_INDEX;
     }
+    const { style } = container;
 
     // The accessibility manager will move the annotation in the DOM in
     // order to match the visual ordering.
     // But if an annotation is above an other one, then we must draw it
     // after the other one whatever the order is in the DOM, hence the
     // use of the z-index.
-    container.style.zIndex = this.parent.zIndex++;
+    style.zIndex = this.parent.zIndex++;
 
     if (data.popupRef) {
       container.setAttribute("aria-haspopup", "dialog");
@@ -236,8 +292,6 @@ class AnnotationElement {
       container.classList.add("norotate");
     }
 
-    const { pageWidth, pageHeight, pageX, pageY } = viewport.rawDims;
-
     if (!data.rect || this instanceof PopupAnnotationElement) {
       const { rotation } = data;
       if (!data.hasOwnCanvas && rotation !== 0) {
@@ -248,35 +302,26 @@ class AnnotationElement {
 
     const { width, height } = getRectDims(data.rect);
 
-    // Do *not* modify `data.rect`, since that will corrupt the annotation
-    // position on subsequent calls to `_createContainer` (see issue 6804).
-    const rect = Util.normalizeRect([
-      data.rect[0],
-      page.view[3] - data.rect[1] + page.view[1],
-      data.rect[2],
-      page.view[3] - data.rect[3] + page.view[1],
-    ]);
-
     if (!ignoreBorder && data.borderStyle.width > 0) {
-      container.style.borderWidth = `${data.borderStyle.width}px`;
+      style.borderWidth = `${data.borderStyle.width}px`;
 
       const horizontalRadius = data.borderStyle.horizontalCornerRadius;
       const verticalRadius = data.borderStyle.verticalCornerRadius;
       if (horizontalRadius > 0 || verticalRadius > 0) {
         const radius = `calc(${horizontalRadius}px * var(--scale-factor)) / calc(${verticalRadius}px * var(--scale-factor))`;
-        container.style.borderRadius = radius;
+        style.borderRadius = radius;
       } else if (this instanceof RadioButtonWidgetAnnotationElement) {
         const radius = `calc(${width}px * var(--scale-factor)) / calc(${height}px * var(--scale-factor))`;
-        container.style.borderRadius = radius;
+        style.borderRadius = radius;
       }
 
       switch (data.borderStyle.style) {
         case AnnotationBorderStyleType.SOLID:
-          container.style.borderStyle = "solid";
+          style.borderStyle = "solid";
           break;
 
         case AnnotationBorderStyleType.DASHED:
-          container.style.borderStyle = "dashed";
+          style.borderStyle = "dashed";
           break;
 
         case AnnotationBorderStyleType.BEVELED:
@@ -288,7 +333,7 @@ class AnnotationElement {
           break;
 
         case AnnotationBorderStyleType.UNDERLINE:
-          container.style.borderBottomStyle = "solid";
+          style.borderBottomStyle = "solid";
           break;
 
         default:
@@ -298,24 +343,34 @@ class AnnotationElement {
       const borderColor = data.borderColor || null;
       if (borderColor) {
         this.#hasBorder = true;
-        container.style.borderColor = Util.makeHexColor(
+        style.borderColor = Util.makeHexColor(
           borderColor[0] | 0,
           borderColor[1] | 0,
           borderColor[2] | 0
         );
       } else {
         // Transparent (invisible) border, so do not draw it at all.
-        container.style.borderWidth = 0;
+        style.borderWidth = 0;
       }
     }
 
-    container.style.left = `${(100 * (rect[0] - pageX)) / pageWidth}%`;
-    container.style.top = `${(100 * (rect[1] - pageY)) / pageHeight}%`;
+    // Do *not* modify `data.rect`, since that will corrupt the annotation
+    // position on subsequent calls to `_createContainer` (see issue 6804).
+    const rect = Util.normalizeRect([
+      data.rect[0],
+      page.view[3] - data.rect[1] + page.view[1],
+      data.rect[2],
+      page.view[3] - data.rect[3] + page.view[1],
+    ]);
+    const { pageWidth, pageHeight, pageX, pageY } = viewport.rawDims;
+
+    style.left = `${(100 * (rect[0] - pageX)) / pageWidth}%`;
+    style.top = `${(100 * (rect[1] - pageY)) / pageHeight}%`;
 
     const { rotation } = data;
     if (data.hasOwnCanvas || rotation === 0) {
-      container.style.width = `${(100 * width) / pageWidth}%`;
-      container.style.height = `${(100 * height) / pageHeight}%`;
+      style.width = `${(100 * width) / pageWidth}%`;
+      style.height = `${(100 * height) / pageHeight}%`;
     } else {
       this.setRotation(rotation, container);
     }
@@ -561,7 +616,7 @@ class AnnotationElement {
     const { container, data } = this;
     container.setAttribute("aria-haspopup", "dialog");
 
-    const popup = new PopupAnnotationElement({
+    const popup = (this.#popupElement = new PopupAnnotationElement({
       data: {
         color: data.color,
         titleObj: data.titleObj,
@@ -575,7 +630,7 @@ class AnnotationElement {
       },
       parent: this.parent,
       elements: [this],
-    });
+    }));
     this.parent.div.append(popup.render());
   }
 
@@ -2001,12 +2056,13 @@ class PopupAnnotationElement extends AnnotationElement {
     const { data, elements } = parameters;
     super(parameters, { isRenderable: AnnotationElement._hasPopupData(data) });
     this.elements = elements;
+    this.popup = null;
   }
 
   render() {
     this.container.classList.add("popupAnnotation");
 
-    const popup = new PopupElement({
+    const popup = (this.popup = new PopupElement({
       container: this.container,
       color: this.data.color,
       titleObj: this.data.titleObj,
@@ -2018,7 +2074,7 @@ class PopupAnnotationElement extends AnnotationElement {
       parent: this.parent,
       elements: this.elements,
       open: this.data.open,
-    });
+    }));
 
     const elementIds = [];
     for (const element of this.elements) {
@@ -2063,11 +2119,15 @@ class PopupElement {
 
   #popup = null;
 
+  #position = null;
+
   #rect = null;
 
   #richText = null;
 
   #titleObj = null;
+
+  #updates = null;
 
   #wasVisible = false;
 
@@ -2134,12 +2194,6 @@ class PopupElement {
       return;
     }
 
-    const {
-      page: { view },
-      viewport: {
-        rawDims: { pageWidth, pageHeight, pageX, pageY },
-      },
-    } = this.#parent;
     const popup = (this.#popup = document.createElement("div"));
     popup.className = "popup";
 
@@ -2206,35 +2260,6 @@ class PopupElement {
       const contents = this._formatContents(contentsObj);
       popup.append(contents);
     }
-
-    let useParentRect = !!this.#parentRect;
-    let rect = useParentRect ? this.#parentRect : this.#rect;
-    for (const element of this.#elements) {
-      if (!rect || Util.intersect(element.data.rect, rect) !== null) {
-        rect = element.data.rect;
-        useParentRect = true;
-        break;
-      }
-    }
-
-    const normalizedRect = Util.normalizeRect([
-      rect[0],
-      view[3] - rect[1] + view[1],
-      rect[2],
-      view[3] - rect[3] + view[1],
-    ]);
-
-    const HORIZONTAL_SPACE_AFTER_ANNOTATION = 5;
-    const parentWidth = useParentRect
-      ? rect[2] - rect[0] + HORIZONTAL_SPACE_AFTER_ANNOTATION
-      : 0;
-    const popupLeft = normalizedRect[0] + parentWidth;
-    const popupTop = normalizedRect[1];
-
-    const { style } = this.#container;
-    style.left = `${(100 * (popupLeft - pageX)) / pageWidth}%`;
-    style.top = `${(100 * (popupTop - pageY)) / pageHeight}%`;
-
     this.#container.append(popup);
   }
 
@@ -2271,6 +2296,78 @@ class PopupElement {
     }
   }
 
+  update({ rect, popupContent }) {
+    this.#updates ||= {
+      contentsObj: this.#contentsObj,
+      richText: this.#richText,
+    };
+    if (rect) {
+      this.#position = null;
+    }
+    if (popupContent) {
+      this.#richText = popupContent;
+      this.#contentsObj = null;
+    }
+    this.#popup?.remove();
+    this.#popup = null;
+  }
+
+  reset() {
+    if (!this.#updates) {
+      return;
+    }
+    ({ contentsObj: this.#contentsObj, richText: this.#richText } =
+      this.#updates);
+    this.#updates = null;
+    this.#popup?.remove();
+    this.#popup = null;
+    this.#position = null;
+  }
+
+  #computePosition() {
+    if (this.#position !== null) {
+      return;
+    }
+    const {
+      page: { view },
+      viewport: {
+        rawDims: { pageWidth, pageHeight, pageX, pageY },
+      },
+    } = this.#parent;
+
+    let useParentRect = !!this.#parentRect;
+    let rect = useParentRect ? this.#parentRect : this.#rect;
+    for (const element of this.#elements) {
+      if (!rect || Util.intersect(element.data.rect, rect) !== null) {
+        rect = element.data.rect;
+        useParentRect = true;
+        break;
+      }
+    }
+
+    const normalizedRect = Util.normalizeRect([
+      rect[0],
+      view[3] - rect[1] + view[1],
+      rect[2],
+      view[3] - rect[3] + view[1],
+    ]);
+
+    const HORIZONTAL_SPACE_AFTER_ANNOTATION = 5;
+    const parentWidth = useParentRect
+      ? rect[2] - rect[0] + HORIZONTAL_SPACE_AFTER_ANNOTATION
+      : 0;
+    const popupLeft = normalizedRect[0] + parentWidth;
+    const popupTop = normalizedRect[1];
+    this.#position = [
+      (100 * (popupLeft - pageX)) / pageWidth,
+      (100 * (popupTop - pageY)) / pageHeight,
+    ];
+
+    const { style } = this.#container;
+    style.left = `${this.#position[0]}%`;
+    style.top = `${this.#position[1]}%`;
+  }
+
   /**
    * Toggle the visibility of the popup.
    */
@@ -2295,6 +2392,7 @@ class PopupElement {
       this.render();
     }
     if (!this.isVisible) {
+      this.#computePosition();
       this.#container.hidden = false;
       this.#container.style.zIndex =
         parseInt(this.#container.style.zIndex) + 1000;
@@ -2327,6 +2425,9 @@ class PopupElement {
   maybeShow() {
     if (!this.#wasVisible) {
       return;
+    }
+    if (!this.#popup) {
+      this.#show();
     }
     this.#wasVisible = false;
     this.#container.hidden = false;
@@ -2897,6 +2998,7 @@ class FileAttachmentAnnotationElement extends AnnotationElement {
  * @property {Object<string, Array<Object>> | null} [fieldObjects]
  * @property {Map<string, HTMLCanvasElement>} [annotationCanvasMap]
  * @property {TextAccessibilityManager} [accessibilityManager]
+ * @property {AnnotationEditorUIManager} [annotationEditorUIManager]
  */
 
 /**
@@ -2913,6 +3015,7 @@ class AnnotationLayer {
     div,
     accessibilityManager,
     annotationCanvasMap,
+    annotationEditorUIManager,
     page,
     viewport,
   }) {
@@ -2922,6 +3025,7 @@ class AnnotationLayer {
     this.page = page;
     this.viewport = viewport;
     this.zIndex = 0;
+    this._annotationEditorUIManager = annotationEditorUIManager;
 
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING")) {
       // For testing purposes.
@@ -3011,15 +3115,16 @@ class AnnotationLayer {
         }
       }
 
-      if (element.annotationEditorType > 0) {
-        this.#editableAnnotations.set(element.data.id, element);
-      }
-
       const rendered = element.render();
       if (data.hidden) {
         rendered.style.visibility = "hidden";
       }
       this.#appendElement(rendered, data.id);
+
+      if (element.annotationEditorType > 0) {
+        this.#editableAnnotations.set(element.data.id, element);
+        this._annotationEditorUIManager?.renderAnnotationElement(element);
+      }
     }
 
     this.#setAnnotationCanvasMap();
@@ -3051,13 +3156,16 @@ class AnnotationLayer {
         continue;
       }
 
+      canvas.className = "annotationContent";
       const { firstChild } = element;
       if (!firstChild) {
         element.append(canvas);
       } else if (firstChild.nodeName === "CANVAS") {
         firstChild.replaceWith(canvas);
-      } else {
+      } else if (!firstChild.classList.contains("annotationContent")) {
         firstChild.before(canvas);
+      } else {
+        firstChild.after(canvas);
       }
     }
     this.#annotationCanvasMap.clear();

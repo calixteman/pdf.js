@@ -1696,6 +1696,70 @@ class AnnotationEditor {
     }
     this.#disabled = true;
   }
+
+  /**
+   * Render an annotation in the annotation layer.
+   * @param {Object} annotation
+   * @returns {HTMLElement}
+   */
+  renderAnnotationElement(annotation) {
+    let content = annotation.container.querySelector(".annotationContent");
+    if (!content) {
+      content = document.createElement("div");
+      content.classList.add("annotationContent", this.editorType);
+      annotation.container.prepend(content);
+    } else if (content.nodeName === "CANVAS") {
+      const canvas = content;
+      content = document.createElement("div");
+      content.classList.add("annotationContent", this.editorType);
+      canvas.before(content);
+    }
+
+    return content;
+  }
+
+  resetAnnotationElement(annotation) {
+    const { firstChild } = annotation.container;
+    if (
+      firstChild.nodeName === "DIV" &&
+      firstChild.classList.contains("annotationContent")
+    ) {
+      firstChild.remove();
+    }
+  }
+
+  makePopupContent(text, fontSize, color) {
+    const popupLines = [];
+    const popupContent = {
+      str: text,
+      html: {
+        name: "div",
+        attributes: {
+          dir: "auto",
+        },
+        children: [
+          {
+            name: "p",
+            children: popupLines,
+          },
+        ],
+      },
+    };
+    const lineAttributes = {
+      style: {
+        color,
+        fontSize: `calc(${fontSize}px * var(--scale-factor))`,
+      },
+    };
+    for (const line of text.split("\n")) {
+      popupLines.push({
+        name: "span",
+        value: line,
+        attributes: lineAttributes,
+      });
+    }
+    return popupContent;
+  }
 }
 
 // This class is used to fake an editor which has been deleted.
