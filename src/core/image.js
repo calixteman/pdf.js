@@ -26,6 +26,7 @@ import {
 } from "../shared/image_utils.js";
 import { BaseStream } from "./base_stream.js";
 import { ColorSpace } from "./colorspace.js";
+import { ColorSpaceUtils } from "./colorspace_utils.js";
 import { DecodeStream } from "./decode_stream.js";
 import { ImageResizer } from "./image_resizer.js";
 import { JpegStream } from "./jpeg_stream.js";
@@ -209,7 +210,7 @@ class PDFImage {
         colorSpace = Name.get("DeviceRGBA");
       }
 
-      this.colorSpace = ColorSpace.parse({
+      this.colorSpace = ColorSpaceUtils.parse({
         cs: colorSpace,
         xref,
         resources: isInline ? res : null,
@@ -848,10 +849,16 @@ class PDFImage {
     const imgArray = await this.getImageBytes(originalHeight * rowBytes, {
       internal: true,
     });
+    console.log(
+      "FOO1",
+      originalHeight,
+      rowBytes,
+      imgArray.every(x => x === 0)
+    );
+
     // imgArray can be incomplete (e.g. after CCITT fax encoding).
     const actualHeight =
       0 | (((imgArray.length / rowBytes) * drawHeight) / originalHeight);
-
     const comps = this.getComponents(imgArray);
 
     // If opacity data is present, use RGBA_32BPP form. Otherwise, use the
@@ -905,6 +912,7 @@ class PDFImage {
       comps,
       alpha01
     );
+
     if (maybeUndoPreblend) {
       this.undoPreblend(data, drawWidth, actualHeight);
     }
