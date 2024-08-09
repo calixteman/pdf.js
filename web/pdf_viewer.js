@@ -2316,11 +2316,13 @@ class PDFViewer {
     if (!this.pdfDocument) {
       return;
     }
-    if (mode === AnnotationEditorType.STAMP) {
-      this.#mlManager?.loadModel("altText");
-    }
 
     const { eventBus } = this;
+
+    if (mode === AnnotationEditorType.STAMP && this.#mlManager) {
+      this.#mlManager.loadModel("altText");
+    }
+
     const updater = () => {
       this.#cleanupSwitchAnnotationEditorMode();
       this.#annotationEditorMode = mode;
