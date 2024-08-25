@@ -36,6 +36,15 @@ import { MissingDataException } from "./core_utils.js";
  * @param {number} alpha01 - Size reserved for the alpha channel.
  */
 function resizeRgbImage(src, dest, w1, h1, w2, h2, alpha01) {
+  // console.log("COUCOUC", src, w1, h1, w2, h2, alpha01);
+  const first = src[0];
+  if (h1 * w1 <= 12 && src.every(v => v === first)) {
+    if (first !== 0) {
+      dest.fill(first);
+    }
+    return;
+  }
+
   const COMPONENTS = 3;
   alpha01 = alpha01 !== 1 ? 0 : alpha01;
   const xRatio = w1 / w2;

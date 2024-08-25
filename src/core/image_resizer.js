@@ -159,12 +159,6 @@ class ImageResizer {
   }
 
   async _createImage() {
-    const data = this._encodeBMP();
-    const blob = new Blob([data.buffer], {
-      type: "image/bmp",
-    });
-    const bitmapPromise = createImageBitmap(blob);
-
     const { MAX_AREA, MAX_DIM } = ImageResizer;
     const { _imgData: imgData } = this;
     const { width, height } = imgData;
@@ -173,8 +167,19 @@ class ImageResizer {
       height / MAX_DIM,
       Math.sqrt((width * height) / MAX_AREA)
     );
+    console.log("minFactor", minFactor);
+    if (minFactor <= 256) {
+      return this._basicRescale();
+    }
 
     const firstFactor = Math.max(minFactor, 2);
+
+    // console.log("createImage", this._imgData, this._isMask);
+    const data = this._encodeBMP();
+    const blob = new Blob([data.buffer], {
+      type: "image/bmp",
+    });
+    const bitmapPromise = createImageBitmap(blob);
 
     // Add 1 to the ratio and round it with 1 digit.
     // We add 1.25 in order to have a final image under the limits
@@ -215,6 +220,83 @@ class ImageResizer {
       );
       bitmap = canvas.transferToImageBitmap();
     }
+
+    imgData.data = null;
+    imgData.bitmap = bitmap;
+    imgData.width = newWidth;
+    imgData.height = newHeight;
+
+    return imgData;
+  }
+
+  _basicRescale() {
+    const factor = 8;
+    const { _imgData: imgData } = this;
+    const { width, height, kind, data } = imgData;
+    const newWidth = Math.floor(width / factor);
+    const newHeight = Math.floor(height / factor);
+    const newLength = newWidth * newHeight;
+    const dest = new Uint32Array(newLength);
+    let newIndex = 0;
+
+    switch (kind) {
+      case ImageKind.RGBA_1BPP:
+        let black = FeatureTest.isLittleEndian ? 0xff000000 : 0x000000ff;
+        let white = 0xffffffff;
+        if (this._isMask) {
+          [black, white] = [white, black];
+        }
+        for (let i = 0, ii = newHeight * factor; i < ii; i += factor) {
+          const y = i * width;
+          for (let j = 0, jj = newWidth * factor; j < jj; j += factor) {
+            const k = y + j;
+            dest[newIndex++] = data[k >> 3] & (1 << (k & 7)) ? black : white;
+          }
+        }
+        break;
+      case ImageKind.RGBA_24BPP:
+        if (FeatureTest.isLittleEndian) {
+          for (let i = 0, ii = newHeight * factor; i < ii; i += factor) {
+            const y = i * width;
+            for (let j = 0, jj = newWidth * factor; j < jj; j += factor) {
+              const k = (y + j) * 3;
+              dest[newIndex++] =
+                data[k] | (data[k + 1] << 8) | (data[k + 2] << 16) | 0xff000000;
+            }
+          }
+        } else {
+          for (let i = 0, ii = newHeight * factor; i < ii; i += factor) {
+            const y = i * width;
+            for (let j = 0, jj = newWidth * factor; j < jj; j += factor) {
+              const k = (y + j) * 3;
+              dest[newIndex++] =
+                (data[k] << 24) |
+                (data[k + 1] << 16) |
+                (data[k + 2] << 8) |
+                0xff;
+            }
+          }
+        }
+        break;
+      case ImageKind.RGBA_32BPP:
+        const src32 = new Uint32Array(data.buffer, 0, data.length >> 2);
+        for (let i = 0, ii = newHeight * factor; i < ii; i += factor) {
+          const y = i * width;
+          for (let j = 0, jj = newWidth * factor; j < jj; j += factor) {
+            dest[newIndex++] = src32[y + j];
+          }
+        }
+        break;
+    }
+    const newData = new ImageData(
+      new Uint8ClampedArray(dest.buffer),
+      newWidth,
+      newHeight
+    );
+    const canvas = new OffscreenCanvas(newWidth, newHeight);
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.putImageData(newData, 0, 0);
+    const bitmap = canvas.transferToImageBitmap();
 
     imgData.data = null;
     imgData.bitmap = bitmap;
