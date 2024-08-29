@@ -48,6 +48,8 @@ class AnnotationEditor {
 
   #disabled = false;
 
+  #editToolbarDiv = null;
+
   #keepAspectRatio = false;
 
   #resizersDiv = null;
@@ -973,7 +975,8 @@ class AnnotationEditor {
       return this._editToolbar;
     }
     this._editToolbar = new EditorToolbar(this);
-    this.div.append(this._editToolbar.render());
+    this.#editToolbarDiv = this._editToolbar.render();
+    this.div.append(this.#editToolbarDiv);
     if (this.#altText) {
       await this._editToolbar.addAltText(this.#altText);
     }
@@ -991,6 +994,12 @@ class AnnotationEditor {
     // We destroy the alt text but we don't null it because we want to be able
     // to restore it in case the user undoes the deletion.
     this.#altText?.destroy();
+  }
+
+  addContainer(container) {
+    if (this.#editToolbarDiv) {
+      this.#editToolbarDiv.before(container);
+    }
   }
 
   getClientDimensions() {
