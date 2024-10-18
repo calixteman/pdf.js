@@ -160,10 +160,32 @@ class ImageResizer {
 
   async _createImage() {
     const data = this._encodeBMP();
-    const blob = new Blob([data.buffer], {
-      type: "image/bmp",
-    });
-    const bitmapPromise = createImageBitmap(blob);
+
+    let decoder, imagePromise;
+
+    if (
+      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+      // eslint-disable-next-line no-undef
+      (typeof ImageDecoder !== "undefined" &&
+        // eslint-disable-next-line no-undef
+        (await ImageDecoder.isTypeSupported("image/bmp")))
+    ) {
+      console.log("ImageDecoder is supported");
+      // eslint-disable-next-line no-undef
+      decoder = new ImageDecoder({
+        data,
+        type: "image/bmp",
+        preferAnimation: false,
+        transfer: [data.buffer],
+      });
+      console.log("Decoding started");
+      imagePromise = decoder.decode();
+    } else {
+      const blob = new Blob([data.buffer], {
+        type: "image/bmp",
+      });
+      imagePromise = createImageBitmap(blob);
+    }
 
     const { MAX_AREA, MAX_DIM } = ImageResizer;
     const { _imgData: imgData } = this;
@@ -188,7 +210,17 @@ class ImageResizer {
 
     let newWidth = width;
     let newHeight = height;
-    let bitmap = await bitmapPromise;
+    let bitmap;
+    if (
+      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+      decoder
+    ) {
+      ({ image: bitmap } = await imagePromise);
+      console.log("Decoding ended");
+      decoder.close();
+    } else {
+      bitmap = await imagePromise;
+    }
 
     for (const step of steps) {
       const prevWidth = newWidth;
