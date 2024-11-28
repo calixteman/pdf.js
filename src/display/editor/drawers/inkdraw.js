@@ -74,6 +74,14 @@ class InkDrawOutliner {
     return !this.#lines || this.#lines.length === 0;
   }
 
+  isCancellable() {
+    return this.#points.length === 2;
+  }
+
+  cancel() {
+    this.removeLastElement();
+  }
+
   add(x, y) {
     // The point is in canvas coordinates which means that there is no rotation.
     // It's the same as parent coordinates.
