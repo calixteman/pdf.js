@@ -71,9 +71,17 @@ class DrawingEditor extends AnnotationEditor {
 
   static _currentDraw = null;
 
+  static _currentDrawingAC = null;
+
   static _currentDrawingOptions = null;
 
   static _currentParent = null;
+
+  static _currentPointerId = null;
+
+  static _currentPointerType = null;
+
+  static _currentPointerIds = null;
 
   static _INNER_MARGIN = 3;
 
@@ -637,32 +645,78 @@ class DrawingEditor extends AnnotationEditor {
     unreachable("Not implemented");
   }
 
-  static startDrawing(
-    parent,
-    uiManager,
-    _isLTR,
-    { target, offsetX: x, offsetY: y }
-  ) {
+  static startDrawing(parent, uiManager, _isLTR, event) {
+    // The _currentPointerType is set when the user starts an empty drawing
+    // session. If, in the same drawing session, the user starts using a
+    // different type of pointer (e.g. a pen and then a finger), we just return.
+    //
+    // The _currentPointerId  and _currentPointerIds are used to keep track of
+    // the pointers with a same type (e.g. two fingers). If the user starts to
+    // draw with a finger and then uses a second finger, we just stop the
+    // current drawing and let the user zoom the document.
+
+    const { target, offsetX: x, offsetY: y, pointerId, pointerType } = event;
+    if (this._currentPointerType && this._currentPointerType !== pointerType) {
+      return;
+    }
+
     const {
       viewport: { rotation },
     } = parent;
     const { width: parentWidth, height: parentHeight } =
       target.getBoundingClientRect();
-    const ac = new AbortController();
+
+    const ac = (this._currentDrawingAC = new AbortController());
     const signal = parent.combinedSignal(ac);
+
+    this._currentPointerId ||= pointerId;
+    this._currentPointerType ||= pointerType;
 
     window.addEventListener(
       "pointerup",
       e => {
-        ac.abort();
-        parent.toggleDrawing(true);
-        this._endDraw(e);
+        if (this._currentPointerId === e.pointerId) {
+          this._endDraw(e);
+        } else {
+          this._currentPointerIds?.delete(e.pointerId);
+        }
+      },
+      { signal }
+    );
+    window.addEventListener(
+      "pointercancel",
+      e => {
+        if (this._currentPointerId === e.pointerId) {
+          this._currentParent.endDrawingSession();
+        } else {
+          this._currentPointerIds?.delete(e.pointerId);
+        }
       },
       { signal }
     );
     window.addEventListener(
       "pointerdown",
-      stopEvent /* Avoid to have undesired clicks during drawing. */,
+      e => {
+        if (this._currentPointerType !== e.pointerType) {
+          // For example, we started with a pen and the user
+          // is now using a finger.
+          return;
+        }
+
+        // For example, the user is using a second finger.
+        (this._currentPointerIds ||= new Set()).add(e.pointerId);
+
+        // The first finger created a first point and a second finger just
+        // started, so we stop the drawing and remove this only point.
+        if (this._currentDraw.isCancellable()) {
+          this._currentDraw.cancel();
+          if (this._currentDraw.isEmpty()) {
+            this._currentParent.endDrawingSession(/* isAborted = */ true);
+          } else {
+            this._endDraw(null);
+          }
+        }
+      },
       {
         capture: true,
         passive: false,
@@ -673,6 +727,17 @@ class DrawingEditor extends AnnotationEditor {
     target.addEventListener("pointermove", this._drawMove.bind(this), {
       signal,
     });
+    target.addEventListener(
+      "touchmove",
+      e => {
+        if (this._currentPointerType === "touch") {
+          stopEvent(e);
+        }
+      },
+      {
+        signal,
+      }
+    );
     parent.toggleDrawing();
 
     if (this._currentDraw) {
@@ -705,19 +770,61 @@ class DrawingEditor extends AnnotationEditor {
     ));
   }
 
-  static _drawMove({ offsetX, offsetY }) {
-    this._currentParent.drawLayer.updateProperties(
-      this._currentDrawId,
-      this._currentDraw.add(offsetX, offsetY)
-    );
+  static _drawMove(event) {
+    if (!this._currentDraw) {
+      return;
+    }
+    const { offsetX, offsetY, pointerId, pointerType } = event;
+
+    if (
+      this._currentPointerType === pointerType &&
+      this._currentPointerId === pointerId
+    ) {
+      if (this._currentPointerIds?.size >= 1) {
+        // The user is using multiple fingers and the first one is moving.
+        this._endDraw(event);
+        return;
+      }
+      this._currentParent.drawLayer.updateProperties(
+        this._currentDrawId,
+        this._currentDraw.add(offsetX, offsetY)
+      );
+      stopEvent(event);
+    }
   }
 
-  static _endDraw({ offsetX, offsetY }) {
+  static _cleanup(all) {
+    if (all) {
+      this._currentDrawId = -1;
+      this._currentDraw = null;
+      this._currentDrawingOptions = null;
+      this._currentParent = null;
+      this._currentPointerType = null;
+    }
+
+    if (this._currentDrawingAC) {
+      this._currentDrawingAC.abort();
+      this._currentDrawingAC = null;
+      this._currentPointerId = null;
+      this._currentPointerIds = null;
+    }
+  }
+
+  static _endDraw(event) {
     const parent = this._currentParent;
-    parent.drawLayer.updateProperties(
-      this._currentDrawId,
-      this._currentDraw.end(offsetX, offsetY)
-    );
+    if (!parent) {
+      return;
+    }
+
+    parent.toggleDrawing(true);
+    this._cleanup(false);
+
+    if (event) {
+      parent.drawLayer.updateProperties(
+        this._currentDrawId,
+        this._currentDraw.end(event.offsetX, event.offsetY)
+      );
+    }
     if (this.supportMultipleDrawings) {
       const draw = this._currentDraw;
       const drawId = this._currentDrawId;
@@ -771,20 +878,13 @@ class DrawingEditor extends AnnotationEditor {
           mustBeCommitted: !isAborted,
         }
       );
-      this._cleanup();
+      this._cleanup(true);
       return editor;
     }
 
     parent.drawLayer.remove(this._currentDrawId);
-    this._cleanup();
+    this._cleanup(true);
     return null;
-  }
-
-  static _cleanup() {
-    this._currentDrawId = -1;
-    this._currentDraw = null;
-    this._currentDrawingOptions = null;
-    this._currentParent = null;
   }
 
   /**

@@ -140,14 +140,14 @@ class AnnotationEditorLayerBuilder {
     if (!this.div) {
       return;
     }
-    this.div.hidden = true;
+    //this.div.hidden = true;
   }
 
   show() {
     if (!this.div || this.annotationEditorLayer.isInvisible) {
       return;
     }
-    this.div.hidden = false;
+    //this.div.hidden = false;
   }
 }
 
