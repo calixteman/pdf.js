@@ -34,6 +34,7 @@ See https://github.com/adobe-type-tools/cmap-resources
 <!--<link rel="stylesheet" href="resource://pdf.js/web/viewer.css">-->
 <!--<link rel="localization" href="toolkit/pdfviewer/viewer.ftl"/>-->
 <!--#else-->
+<!--#include viewer-snippet.html-->
 <link rel="stylesheet" href="viewer-geckoview.css">
 <!--#endif-->
 
@@ -88,7 +89,7 @@ See https://github.com/adobe-type-tools/cmap-resources
         }
       }
     </script>
-    <script src="viewer-geckoview.js" type="module"></script>
+    <script src="viewer-geckoview.mjs" type="module"></script>
 <!--#else-->
 <!--<script src="resource://pdf.js/web/viewer.mjs" type="module"></script>-->
 <!--#endif-->

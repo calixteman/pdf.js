@@ -1672,6 +1672,7 @@ class AnnotationEditorUIManager {
       await this.#updateModeCapability.promise;
       if (!this.#updateModeCapability) {
         // This ui manager has been destroyed.
+        console.log("updateMode", 1);
         return;
       }
     }

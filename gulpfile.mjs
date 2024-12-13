@@ -219,6 +219,15 @@ function createWebpackAlias(defines) {
     "web-toolbar": "web/toolbar.js",
   };
 
+  if (defines.GECKOVIEW) {
+    const gvAlias = {
+      "web-toolbar": "web/toolbar-geckoview.js",
+    };
+    for (const key in viewerAlias) {
+      viewerAlias[key] = gvAlias[key] || "web/stubs-geckoview.js";
+    }
+  }
+
   if (defines.CHROME) {
     libraryAlias["display-cmap_reader_factory"] =
       "src/display/cmap_reader_factory.js";
@@ -1046,12 +1055,18 @@ function preprocessHTML(source, defines) {
 
 function buildGeneric(defines, dir) {
   fs.rmSync(dir, { recursive: true, force: true });
+  const gvDefines = { ...defines, GECKOVIEW: true };
 
   return ordered([
-    createMainBundle(defines).pipe(gulp.dest(dir + "build")),
-    createWorkerBundle(defines).pipe(gulp.dest(dir + "build")),
-    createSandboxBundle(defines).pipe(gulp.dest(dir + "build")),
+    createMainBundle(gvDefines).pipe(gulp.dest(dir + "build")),
+    createWorkerBundle(gvDefines).pipe(gulp.dest(dir + "build")),
+    createSandboxBundle(gvDefines).pipe(gulp.dest(dir + "build")),
     createWebBundle(defines, {
+      defaultPreferencesDir: defines.SKIP_BABEL
+        ? "generic/"
+        : "generic-legacy/",
+    }).pipe(gulp.dest(dir + "web")),
+    createGVWebBundle(gvDefines, {
       defaultPreferencesDir: defines.SKIP_BABEL
         ? "generic/"
         : "generic-legacy/",
@@ -1070,7 +1085,22 @@ function buildGeneric(defines, dir) {
     createStandardFontBundle().pipe(gulp.dest(dir + "web/standard_fonts")),
 
     preprocessHTML("web/viewer.html", defines).pipe(gulp.dest(dir + "web")),
+    preprocessHTML("web/viewer-geckoview.html", gvDefines).pipe(
+      gulp.dest(dir + "web")
+    ),
     preprocessCSS("web/viewer.css", defines)
+      .pipe(
+        postcss([
+          postcssDirPseudoClass(),
+          discardCommentsCSS(),
+          postcssNesting(),
+          postcssDarkThemeClass(),
+          autoprefixer(AUTOPREFIXER_CONFIG),
+        ])
+      )
+      .pipe(gulp.dest(dir + "web")),
+
+    preprocessCSS("web/viewer-geckoview.css", gvDefines)
       .pipe(
         postcss([
           postcssDirPseudoClass(),
@@ -1154,6 +1184,7 @@ function buildComponents(defines, dir) {
     "web/images/toolbarButton-{editorHighlight,menuArrow}.svg",
     "web/images/cursor-*.svg",
     "web/images/secondaryToolbarButton-documentProperties.svg",
+    "web/images/gv-*.svg",
   ];
 
   return ordered([

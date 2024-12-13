@@ -42,7 +42,7 @@ function preprocess(inFilename, outFilename, defines) {
     return content.replaceAll(
       /^\s*@import\s+url\(([^)]+)\);\s*$/gm,
       function (all, url) {
-        if (defines.GECKOVIEW) {
+        if (false && defines.GECKOVIEW) {
           switch (url) {
             case "annotation_editor_layer_builder.css":
               return "";
