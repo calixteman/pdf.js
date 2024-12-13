@@ -1031,6 +1031,14 @@ class AnnotationEditor {
    * @returns {Promise<EditorToolbar|null>}
    */
   async addEditToolbar() {
+    if (
+      typeof PDFJSDev === "undefined"
+        ? window.isGECKOVIEW
+        : PDFJSDev.test("GECKOVIEW")
+    ) {
+      return null;
+    }
+
     if (this._editToolbar || this.#isInEditMode) {
       return this._editToolbar;
     }

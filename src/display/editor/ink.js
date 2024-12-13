@@ -31,11 +31,19 @@ class InkDrawingOptions extends DrawingOptions {
     super();
     this.#viewParameters = viewerParameters;
 
+    let defaultThickness = 1;
+    if (
+      typeof PDFJSDev === "undefined"
+        ? window.isGECKOVIEW
+        : PDFJSDev.test("GECKOVIEW")
+    ) {
+      defaultThickness = 2;
+    }
     super.updateProperties({
       fill: "none",
       stroke: AnnotationEditor._defaultLineColor,
       "stroke-opacity": 1,
-      "stroke-width": 1,
+      "stroke-width": defaultThickness,
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "stroke-miterlimit": 10,

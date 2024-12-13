@@ -13,14 +13,19 @@
  * limitations under the License.
  */
 
+import { AnnotationEditorType } from "pdfjs-lib";
+
 /**
  * @typedef {Object} ToolbarOptions
  * @property {HTMLDivElement} mainContainer - Main container.
  * @property {HTMLDivElement} container - Container for the toolbar.
  * @property {HTMLButtonElement} download - Button to download the document.
+ *  * @property {HTMLButtonElement} draw - Button to start drawing.
  */
 
 class Toolbar {
+  #actions;
+
   #buttons;
 
   #eventBus;
@@ -32,11 +37,49 @@ class Toolbar {
    */
   constructor(options, eventBus, nimbusData) {
     this.#eventBus = eventBus;
+    const { actions, container } = options;
+    this.#actions = actions;
     const buttons = [
       {
         element: options.download,
         eventName: "download",
         nimbusName: "download-button",
+      },
+      {
+        element: options.draw,
+        eventName: "switchannotationeditormode",
+        eventDetails: {
+          mode: AnnotationEditorType.INK,
+        },
+        action: () => {
+          container.classList.add("draw");
+          container.classList.remove("main");
+        },
+      },
+      {
+        element: options.back,
+        eventName: "switchannotationeditormode",
+        eventDetails: {
+          mode: AnnotationEditorType.NONE,
+        },
+        action: () => {
+          container.classList.value = "";
+          container.classList.add("main", "show");
+        },
+      },
+      {
+        element: options.commit,
+        eventName: "editingaction",
+        eventDetails: {
+          name: "commit",
+        },
+      },
+      {
+        element: options.delete,
+        eventName: "editingaction",
+        eventDetails: {
+          name: "delete",
+        },
       },
     ];
 
@@ -50,18 +93,23 @@ class Toolbar {
         }
       }
       if (this.#buttons.length > 0) {
-        options.container.classList.add("show");
+        container.classList.add("show");
       } else {
-        options.container.remove();
+        container.remove();
         options.mainContainer.classList.add("noToolbar");
       }
     } else {
-      options.container.classList.add("show");
+      container.classList.add("show");
       this.#buttons = buttons;
     }
 
     // Bind the event listeners for click and various other actions.
     this.#bindListeners(options);
+
+    this.#eventBus._on(
+      "annotationeditorstateschanged",
+      this.#onAnnotationEditorStatesChanged.bind(this)
+    );
   }
 
   setPageNumber(pageNumber, pageLabel) {}
@@ -74,7 +122,7 @@ class Toolbar {
 
   #bindListeners(options) {
     // The buttons within the toolbar.
-    for (const { element, eventName, eventDetails } of this.#buttons) {
+    for (const { element, eventName, eventDetails, action } of this.#buttons) {
       element.addEventListener("click", evt => {
         if (eventName !== null) {
           this.#eventBus.dispatch(eventName, { source: this, ...eventDetails });
@@ -86,11 +134,26 @@ class Toolbar {
             },
           });
         }
+        action?.();
       });
     }
   }
 
   updateLoadingIndicatorState(loading = false) {}
+
+  #onAnnotationEditorStatesChanged({
+    details: { hasSelectedEditor, hasSomethingToCommit },
+  }) {
+    if (typeof hasSelectedEditor === "boolean") {
+      this.#actions.classList.toggle("hasSelectedEditor", hasSelectedEditor);
+    }
+    if (typeof hasSomethingToCommit === "boolean") {
+      this.#actions.classList.toggle(
+        "hasSomethingToCommit",
+        hasSomethingToCommit
+      );
+    }
+  }
 }
 
 export { Toolbar };

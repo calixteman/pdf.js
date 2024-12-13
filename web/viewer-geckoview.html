@@ -100,10 +100,28 @@ See https://github.com/adobe-type-tools/cmap-resources
 
       <div id="mainContainer">
 
-        <div id="floatingToolbar">
-          <button id="download" class="toolbarButton" type="button" title="Download" tabindex="0" data-l10n-id="pdfjs-download-button">
-            <span data-l10n-id="pdfjs-download-button-label">Download</span>
-          </button>
+        <div id="floatingToolbar" class="main toolbarHorizontalGroup">
+          <div id="main" class="toolbarHorizontalGroup">
+            <button id="download" class="toolbarButton" type="button" title="Download" tabindex="0" data-l10n-id="pdfjs-download-button">
+              <span data-l10n-id="pdfjs-download-button-label">Download</span>
+            </button>
+            <button id="draw" class="toolbarButton" type="button" title="Draw" tabindex="0" data-l10n-id="pdfjs-draw-button">
+              <span data-l10n-id="pdfjs-draw-button-label">Draw</span>
+            </button>
+          </div>
+          <div id="editing" class="toolbarHorizontalGroup">
+            <div class="toolbarHorizontalGroup">
+              <button id="back" class="toolbarButton" type="button" title="Back" tabindex="0" data-l10n-id="pdfjs-back-button">
+             </button>
+              <span class="title">Draw</span>
+            </div>
+            <div id="actions" class="toolbarHorizontalGroup">
+              <button id="commit" class="toolbarButton" type="button" title="End editing" tabindex="0" data-l10n-id="pdfjs-commit-button">
+              </button>
+              <button id="delete" class="toolbarButton" type="button" title="Delete" tabindex="0" data-l10n-id="pdfjs-delete-button">
+              </button>
+            </div>
+          </div>
         </div>
 
         <div id="viewerContainer" tabindex="0">

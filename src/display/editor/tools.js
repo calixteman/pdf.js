@@ -673,6 +673,7 @@ class AnnotationEditorUIManager {
     hasSomethingToRedo: false,
     hasSelectedEditor: false,
     hasSelectedText: false,
+    hasSomethingToCommit: false,
   };
 
   #translation = [0, 0];
@@ -1172,7 +1173,7 @@ class AnnotationEditorUIManager {
       if (this.#selectedTextNode) {
         this.#highlightToolbar?.hide();
         this.#selectedTextNode = null;
-        this.#dispatchUpdateStates({
+        this._dispatchUpdateStates({
           hasSelectedText: false,
         });
       }
@@ -1189,7 +1190,7 @@ class AnnotationEditorUIManager {
       if (this.#selectedTextNode) {
         this.#highlightToolbar?.hide();
         this.#selectedTextNode = null;
-        this.#dispatchUpdateStates({
+        this._dispatchUpdateStates({
           hasSelectedText: false,
         });
       }
@@ -1198,7 +1199,7 @@ class AnnotationEditorUIManager {
 
     this.#highlightToolbar?.hide();
     this.#selectedTextNode = anchorNode;
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSelectedText: true,
     });
 
@@ -1535,6 +1536,9 @@ class AnnotationEditorUIManager {
       case "highlightSelection":
         this.highlightSelection("context_menu");
         break;
+      case "commit":
+        this.commitOrRemove();
+        break;
     }
   }
 
@@ -1543,7 +1547,7 @@ class AnnotationEditorUIManager {
    * something to undo, redo, ...
    * @param {Object} details
    */
-  #dispatchUpdateStates(details) {
+  _dispatchUpdateStates(details) {
     const hasChanged = Object.entries(details).some(
       ([key, value]) => this.#previousStates[key] !== value
     );
@@ -1584,7 +1588,7 @@ class AnnotationEditorUIManager {
     if (isEditing) {
       this.#addFocusManager();
       this.#addCopyPasteListeners();
-      this.#dispatchUpdateStates({
+      this._dispatchUpdateStates({
         isEditing: this.#mode !== AnnotationEditorType.NONE,
         isEmpty: this.#isEmpty(),
         hasSomethingToUndo: this.#commandManager.hasSomethingToUndo(),
@@ -1594,7 +1598,7 @@ class AnnotationEditorUIManager {
     } else {
       this.#removeFocusManager();
       this.#removeCopyPasteListeners();
-      this.#dispatchUpdateStates({
+      this._dispatchUpdateStates({
         isEditing: false,
       });
       this.disableUserSelect(false);
@@ -1984,7 +1988,7 @@ class AnnotationEditorUIManager {
     if (this.#selectedEditors.has(editor)) {
       this.#selectedEditors.delete(editor);
       editor.unselect();
-      this.#dispatchUpdateStates({
+      this._dispatchUpdateStates({
         hasSelectedEditor: this.hasSelection,
       });
       return;
@@ -1992,7 +1996,7 @@ class AnnotationEditorUIManager {
     this.#selectedEditors.add(editor);
     editor.select();
     this.#dispatchUpdateUI(editor.propertiesToUpdate);
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSelectedEditor: true,
     });
   }
@@ -2013,7 +2017,7 @@ class AnnotationEditorUIManager {
     this.#selectedEditors.add(editor);
     editor.select();
     this.#dispatchUpdateUI(editor.propertiesToUpdate);
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSelectedEditor: true,
     });
   }
@@ -2037,7 +2041,7 @@ class AnnotationEditorUIManager {
   unselect(editor) {
     editor.unselect();
     this.#selectedEditors.delete(editor);
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSelectedEditor: this.hasSelection,
     });
   }
@@ -2058,7 +2062,7 @@ class AnnotationEditorUIManager {
    */
   undo() {
     this.#commandManager.undo();
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSomethingToUndo: this.#commandManager.hasSomethingToUndo(),
       hasSomethingToRedo: true,
       isEmpty: this.#isEmpty(),
@@ -2071,7 +2075,7 @@ class AnnotationEditorUIManager {
    */
   redo() {
     this.#commandManager.redo();
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSomethingToUndo: true,
       hasSomethingToRedo: this.#commandManager.hasSomethingToRedo(),
       isEmpty: this.#isEmpty(),
@@ -2084,7 +2088,7 @@ class AnnotationEditorUIManager {
    */
   addCommands(params) {
     this.#commandManager.add(params);
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSomethingToUndo: true,
       hasSomethingToRedo: false,
       isEmpty: this.#isEmpty(),
@@ -2167,7 +2171,7 @@ class AnnotationEditorUIManager {
       this.#selectedEditors.add(editor);
       editor.select();
     }
-    this.#dispatchUpdateStates({ hasSelectedEditor: this.hasSelection });
+    this._dispatchUpdateStates({ hasSelectedEditor: this.hasSelection });
   }
 
   /**
@@ -2205,7 +2209,7 @@ class AnnotationEditorUIManager {
       editor.unselect();
     }
     this.#selectedEditors.clear();
-    this.#dispatchUpdateStates({
+    this._dispatchUpdateStates({
       hasSelectedEditor: false,
     });
   }

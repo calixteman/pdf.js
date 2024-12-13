@@ -974,6 +974,10 @@ class AnnotationEditorLayer {
   get scale() {
     return this.#uiManager.viewParameters.realScale;
   }
+
+  dispatchUpdateStates(details) {
+    this.#uiManager._dispatchUpdateStates(details);
+  }
 }
 
 export { AnnotationEditorLayer };

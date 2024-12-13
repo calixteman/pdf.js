@@ -41,6 +41,10 @@
   --toolbar-border-width: 1px;
 
   --toolbarButton-download-icon: url(images/gv-toolbarButton-download.svg);
+  --toolbarButton-draw-icon: url(images/toolbarButton-editorInk.svg);
+  --toolbarButton-back-icon: url(images/gv-toolbarButton-back.svg);
+  --toolbarButton-commit-icon: url(images/gv-toolbarButton-commit.svg);
+  --toolbarButton-delete-icon: url(images/editor-toolbar-delete.svg);
 }
 
 :root:dir(rtl) {
@@ -172,6 +176,16 @@ body {
   border-color: #0a84ff;
 }
 
+.toolbarHorizontalGroup {
+  height: 100%;
+  display: inline flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1px;
+  box-sizing: border-box;
+}
+
 #floatingToolbar {
   display: flex;
   align-items: center;
@@ -226,6 +240,56 @@ body {
 
     &#download::before {
       mask-image: var(--toolbarButton-download-icon);
+    }
+
+    &#draw::before {
+      mask-image: var(--toolbarButton-draw-icon);
+    }
+
+    &#back::before {
+      mask-image: var(--toolbarButton-back-icon);
+    }
+
+    &#commit::before {
+      mask-image: var(--toolbarButton-commit-icon);
+    }
+
+    &#delete::before {
+      mask-image: var(--toolbarButton-delete-icon);
+    }
+  }
+
+  &.main {
+    #editing {
+      display: none;
+    }
+  }
+
+  &:not(.main) {
+    #main {
+      display: none;
+    }
+
+    #editing {
+      width: 100%;
+
+      .title {
+        font: caption;
+        font-size: 12px;
+      }
+
+      #actions {
+        &:not(.hasSelectedEditor) {
+          #delete {
+            display: none;
+          }
+        }
+        &:not(.hasSomethingToCommit) {
+          #commit {
+            display: none;
+          }
+        }
+      }
     }
   }
 }

@@ -831,6 +831,16 @@ class DrawingEditor extends AnnotationEditor {
       return;
     }
 
+    if (
+      typeof PDFJSDev === "undefined"
+        ? window.isGECKOVIEW
+        : PDFJSDev.test("GECKOVIEW")
+    ) {
+      if (!DrawingEditor.#currentDraw.isEmpty()) {
+        parent.dispatchUpdateStates({ hasSomethingToCommit: true });
+      }
+    }
+
     parent.toggleDrawing(true);
     this._cleanup(false);
 
@@ -869,6 +879,17 @@ class DrawingEditor extends AnnotationEditor {
     if (!parent) {
       return null;
     }
+
+    if (
+      typeof PDFJSDev === "undefined"
+        ? window.isGECKOVIEW
+        : PDFJSDev.test("GECKOVIEW")
+    ) {
+      if (!DrawingEditor.#currentDraw.isEmpty()) {
+        parent.dispatchUpdateStates({ hasSomethingToCommit: false });
+      }
+    }
+
     parent.toggleDrawing(true);
     parent.cleanUndoStack(AnnotationEditorParamsType.DRAW_STEP);
 

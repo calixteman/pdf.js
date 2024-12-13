@@ -44,6 +44,11 @@ function getViewerConfiguration() {
       mainContainer,
       container: document.getElementById("floatingToolbar"),
       download: document.getElementById("download"),
+      draw: document.getElementById("draw"),
+      back: document.getElementById("back"),
+      actions: document.getElementById("actions"),
+      commit: document.getElementById("commit"),
+      delete: document.getElementById("delete"),
     },
 
     passwordOverlay: {
