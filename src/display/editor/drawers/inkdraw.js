@@ -314,8 +314,13 @@ class InkDrawOutline extends Outline {
     this.#thickness = thickness;
     this.#innerMargin = innerMargin ?? 0;
     this.#lines = lines;
+    this._extra = null;
 
     this.#computeBbox();
+  }
+
+  get thickness() {
+    return this.#thickness;
   }
 
   setLastElement(element) {

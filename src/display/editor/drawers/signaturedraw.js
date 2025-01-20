@@ -420,7 +420,7 @@ class SignatureExtractor {
   static #getGrayPixels(bitmap) {
     const originalBitmap = bitmap;
     const { width, height } = bitmap;
-    const { maxDim } = this.#PARAMETERS;
+    const maxDim = this.#PARAMETERS.maxDim;
     let newWidth = width;
     let newHeight = height;
 
