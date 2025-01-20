@@ -203,6 +203,7 @@ function createWebpackAlias(defines) {
     "web-download_manager": "",
     "web-external_services": "",
     "web-new_alt_text_manager": "web/new_alt_text_manager.js",
+    "web-signature-manager": "web/signature_manager.js",
     "web-null_l10n": "",
     "web-pdf_attachment_viewer": "web/pdf_attachment_viewer.js",
     "web-pdf_cursor_tools": "web/pdf_cursor_tools.js",

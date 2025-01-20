@@ -62,6 +62,7 @@ import {
   RenderingCancelledException,
   setLayerDimensions,
   stopEvent,
+  SupportedImageMimeTypes,
 } from "./display/display_utils.js";
 import { AnnotationEditorLayer } from "./display/editor/annotation_editor_layer.js";
 import { AnnotationEditorUIManager } from "./display/editor/tools.js";
@@ -127,6 +128,7 @@ export {
   setLayerDimensions,
   shadow,
   stopEvent,
+  SupportedImageMimeTypes,
   TextLayer,
   TouchManager,
   UnexpectedResponseException,

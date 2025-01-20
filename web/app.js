@@ -90,6 +90,7 @@ import { PDFThumbnailViewer } from "web-pdf_thumbnail_viewer";
 import { PDFViewer } from "./pdf_viewer.js";
 import { Preferences } from "web-preferences";
 import { SecondaryToolbar } from "web-secondary_toolbar";
+import { SignatureManager } from "web-signature_manager";
 import { Toolbar } from "web-toolbar";
 import { ViewHistory } from "./view_history.js";
 
@@ -459,6 +460,10 @@ const PDFViewerApplication = {
       this.editorUndoBar = new EditorUndoBar(appConfig.editorUndoBar, eventBus);
     }
 
+    const signatureManager = appConfig.addSignatureDialog
+      ? new SignatureManager(appConfig.addSignatureDialog, this.overlayManager)
+      : null;
+
     const enableHWA = AppOptions.get("enableHWA");
     const pdfViewer = new PDFViewer({
       container,
@@ -468,6 +473,7 @@ const PDFViewerApplication = {
       linkService: pdfLinkService,
       downloadManager,
       altTextManager,
+      signatureManager,
       editorUndoBar: this.editorUndoBar,
       findController,
       scriptingManager:

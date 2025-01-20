@@ -18,7 +18,11 @@ import {
   AnnotationPrefix,
   shadow,
 } from "../../shared/util.js";
-import { OutputScale, PixelsPerInch } from "../display_utils.js";
+import {
+  OutputScale,
+  PixelsPerInch,
+  SupportedImageMimeTypes,
+} from "../display_utils.js";
 import { AnnotationEditor } from "./editor.js";
 import { StampAnnotationElement } from "../annotation_layer.js";
 
@@ -64,24 +68,7 @@ class StampEditor extends AnnotationEditor {
   }
 
   static get supportedTypes() {
-    // See https://developer.mozilla.org/en-US/docs/Web/Media/Formats/Image_types
-    // to know which types are supported by the browser.
-    const types = [
-      "apng",
-      "avif",
-      "bmp",
-      "gif",
-      "jpeg",
-      "png",
-      "svg+xml",
-      "webp",
-      "x-icon",
-    ];
-    return shadow(
-      this,
-      "supportedTypes",
-      types.map(type => `image/${type}`)
-    );
+    return SupportedImageMimeTypes;
   }
 
   static get supportedTypesStr() {

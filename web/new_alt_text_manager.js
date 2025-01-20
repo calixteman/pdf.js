@@ -411,6 +411,7 @@ class NewAltTextManager {
     this.#toggleNotNow();
     this.#toggleAI(hasAI);
     this.#toggleError(false);
+    console.trace();
 
     try {
       await this.#overlayManager.open(this.#dialog);

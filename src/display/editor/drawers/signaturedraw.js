@@ -15,6 +15,7 @@
 
 import { ContourDrawOutline } from "./contour.js";
 import { FeatureTest } from "../../../shared/util.js";
+import { InkDrawOutline } from "./inkdraw.js";
 import { Outline } from "./outline.js";
 
 /**
@@ -364,6 +365,14 @@ class SignatureExtractor {
     return [out, histogram];
   }
 
+  static #getHistogram(buf) {
+    const histogram = new Uint32Array(256);
+    for (const g of buf) {
+      histogram[g]++;
+    }
+    return histogram;
+  }
+
   static #toUint8(buf) {
     // We have a RGBA buffer, containing a grayscale image.
     // We want to convert it into a basic G buffer.
@@ -432,7 +441,7 @@ class SignatureExtractor {
   static #getGrayPixels(bitmap) {
     const originalBitmap = bitmap;
     const { width, height } = bitmap;
-    const { maxDim } = this.#PARAMETERS;
+    const maxDim = this.#PARAMETERS.maxDim;
     let newWidth = width;
     let newHeight = height;
 
@@ -501,36 +510,58 @@ class SignatureExtractor {
   }
 
   static process(bitmap, pageWidth, pageHeight, rotation, innerMargin) {
-    const [uint8Buf, width, height] = this.#getGrayPixels(bitmap);
-    const [uint8Filtered, histogram] = this.#bilateralFilter(
-      uint8Buf,
-      width,
-      height,
-      Math.hypot(width, height) * this.#PARAMETERS.sigmaSFactor,
-      this.#PARAMETERS.sigmaR,
-      this.#PARAMETERS.kernelSize
-    );
+    let uint8Buf, width, height, histogram;
+    if (ArrayBuffer.isView(bitmap.buffer)) {
+      ({ buffer: uint8Buf, width, height } = bitmap);
+      uint8Buf = this.#toUint8(uint8Buf);
+      histogram = this.#getHistogram(uint8Buf);
+    } else {
+      [uint8Buf, width, height] = this.#getGrayPixels(bitmap);
+      [uint8Buf, histogram] = this.#bilateralFilter(
+        uint8Buf,
+        width,
+        height,
+        Math.hypot(width, height) * this.#PARAMETERS.sigmaSFactor,
+        this.#PARAMETERS.sigmaR,
+        this.#PARAMETERS.kernelSize
+      );
+    }
 
     const threshold = this.#guessThreshold(histogram);
-    const contourList = this.#findContours(
-      uint8Filtered,
-      width,
-      height,
-      threshold
-    );
-    const linesAndPoints = [];
+    const contourList = this.#findContours(uint8Buf, width, height, threshold);
 
+    return this.processDrawnLines(
+      { curves: contourList, width, height },
+      pageWidth,
+      pageHeight,
+      rotation,
+      innerMargin,
+      true,
+      true
+    );
+  }
+
+  static processDrawnLines(
+    lines,
+    pageWidth,
+    pageHeight,
+    rotation,
+    innerMargin,
+    mustSmooth,
+    areContours
+  ) {
     if (rotation % 180 !== 0) {
       [pageWidth, pageHeight] = [pageHeight, pageWidth];
     }
 
-    // The points need to be converted into page coordinates.
-    const ratio = 0.5 * Math.min(pageWidth / width, pageHeight / height);
+    const { curves, thickness, width, height } = lines;
+    const linesAndPoints = [];
+    const ratio = Math.min(pageWidth / width, pageHeight / height);
     const xScale = ratio / pageWidth;
     const yScale = ratio / pageHeight;
 
-    for (const { points } of contourList) {
-      const reducedPoints = this.#douglasPeucker(points);
+    for (const { points } of curves) {
+      const reducedPoints = mustSmooth ? this.#douglasPeucker(points) : points;
       if (!reducedPoints) {
         continue;
       }
@@ -539,7 +570,7 @@ class SignatureExtractor {
       const newPoints = new Float32Array(len);
       const line = new Float32Array(3 * (len - 2));
 
-      let [x1, y1, x2, y2] = reducedPoints;
+      let [x1, y1, x2, y2] = points;
       x1 *= xScale;
       y1 *= yScale;
       x2 *= xScale;
@@ -556,14 +587,21 @@ class SignatureExtractor {
 
       linesAndPoints.push({ line, points: newPoints });
     }
-    const outline = new ContourDrawOutline();
+
+    if (linesAndPoints.length === 0) {
+      return null;
+    }
+
+    const outline = areContours
+      ? new ContourDrawOutline()
+      : new InkDrawOutline();
     outline.build(
       linesAndPoints,
       pageWidth,
       pageHeight,
       1,
       rotation,
-      0,
+      areContours ? 0 : thickness,
       innerMargin
     );
 
