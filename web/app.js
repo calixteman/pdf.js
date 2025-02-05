@@ -164,6 +164,7 @@ const PDFViewerApplication = {
   url: "",
   baseUrl: "",
   mlManager: null,
+  signatureStorage: null,
   _downloadUrl: "",
   _eventBusAbortController: null,
   _windowAbortController: null,
@@ -460,13 +461,16 @@ const PDFViewerApplication = {
       this.editorUndoBar = new EditorUndoBar(appConfig.editorUndoBar, eventBus);
     }
 
-    const signatureManager = appConfig.addSignatureDialog
-      ? new SignatureManager(
-          appConfig.addSignatureDialog,
-          this.overlayManager,
-          this.l10n
-        )
-      : null;
+    const signatureManager =
+      AppOptions.get("enableSignatureEditor") && appConfig.addSignatureDialog
+        ? new SignatureManager(
+            appConfig.addSignatureDialog,
+            this.overlayManager,
+            this.l10n,
+            (this.signatureStorage ||=
+              this.externalServices.createSignatureStorage())
+          )
+        : null;
 
     const enableHWA = AppOptions.get("enableHWA");
     const pdfViewer = new PDFViewer({

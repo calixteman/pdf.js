@@ -22,6 +22,7 @@ import { GenericScripting } from "./generic_scripting.js";
 
 // These strings are from chrome/app/resources/generated_resources_*.xtb.
 import i18nFileAccessLabels from "./chrome-i18n-allow-access-to-file-urls.json" with { type: "json" };
+import { SignatureStorage } from "./generic_signature_storage.js";
 
 if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("CHROME")) {
   throw new Error(
@@ -418,6 +419,10 @@ class ExternalServices extends BaseExternalServices {
 
   createScripting() {
     return new GenericScripting(AppOptions.get("sandboxBundleSrc"));
+  }
+
+  createSignatureStorage() {
+    return new SignatureStorage();
   }
 }
 
