@@ -849,12 +849,12 @@ class PDFImage {
     const imgArray = await this.getImageBytes(originalHeight * rowBytes, {
       internal: true,
     });
-    console.log(
+    /*console.log(
       "FOO1",
       originalHeight,
       rowBytes,
       imgArray.every(x => x === 0)
-    );
+    );*/
 
     // imgArray can be incomplete (e.g. after CCITT fax encoding).
     const actualHeight =

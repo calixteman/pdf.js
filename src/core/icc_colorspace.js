@@ -17,102 +17,153 @@ import {
   DataType,
   initSync,
   Intent,
-  qcms_drop_profile,
-  qcms_drop_transform,
-  qcms_profile_from_memory,
-  qcms_profile_srgb,
-  qcms_transform_create,
-  qcms_transform_data,
+  qcms_convert_one,
+  qcms_convert_one_array,
+  qcms_convert_three,
+  qcms_convert_three_array,
+  qcms_convert_four,
+  qcms_convert_four_array,
+  qcms_transformer_one_from_memory,
+  qcms_transformer_three_from_memory,
+  qcms_transformer_four_from_memory,
+  qcms_drop_transformer_one,
+  qcms_drop_transformer_three,
+  qcms_drop_transformer_four,
 } from "../../external/qcms/qcms_pdf_js.js";
 import { ColorSpace } from "./colorspace.js";
+import { DEST_BUFFER } from "../../external/qcms/myjs.js";
 
 class IccColorSpace extends ColorSpace {
-  #profile;
+  #transformer;
 
-  #rgbProfile;
+  #convertArray;
 
-  #transform;
+  #convertPixel;
 
   static #module = null;
 
   constructor(iccProfile, numComps) {
     super("ICCBased", numComps);
     IccColorSpace.#module ||= IccColorSpace.#load();
-    this.#profile = qcms_profile_from_memory(iccProfile);
-    this.#rgbProfile = qcms_profile_srgb();
-    let dataType;
-    this.toto = true;
+    DEST_BUFFER.wasm = IccColorSpace.#module;
     switch (numComps) {
       case 1:
-        dataType = DataType.Gray8;
+        this.#transformer = qcms_transformer_one_from_memory(
+          iccProfile,
+          DataType.Gray8,
+          Intent.Perceptual
+        );
+        this.#convertArray = src => qcms_convert_one_array(this.#transformer, src);
+        this.#convertPixel = (src, srcOffset, dest, destOffset) => {
+          const rgb = qcms_convert_one(
+            this.#transformer,
+            src[srcOffset] * 255,
+          );
+          const R = (rgb >> 16) & 0xff;
+          const G = (rgb >> 8) & 0xff;
+          const B = rgb & 0xff;
+          dest[destOffset] = R;
+          dest[destOffset + 1] = G;
+          dest[destOffset + 2] = B;
+        }
         break;
       case 3:
-        dataType = DataType.RGB8;
+        this.#transformer = qcms_transformer_three_from_memory(
+          iccProfile,
+          DataType.RGB8,
+          Intent.Perceptual
+        );
+        this.#convertArray = src => qcms_convert_three_array(this.#transformer, src);
+        this.#convertPixel = (src, srcOffset, dest, destOffset) => {
+          const rgb = qcms_convert_three(
+            this.#transformer,
+            src[srcOffset] * 255,
+            src[srcOffset + 1] * 255,
+            src[srcOffset + 2] * 255
+          );
+          const R = (rgb >> 16) & 0xff;
+          const G = (rgb >> 8) & 0xff;
+          const B = rgb & 0xff;
+          dest[destOffset] = R;
+          dest[destOffset + 1] = G;
+          dest[destOffset + 2] = B;
+        }
         break;
       case 4:
-        dataType = DataType.CMYK;
+        this.#transformer = qcms_transformer_four_from_memory(
+          iccProfile,
+          DataType.CMYK,
+          Intent.Perceptual
+        );
+        this.#convertArray = src => qcms_convert_four_array(this.#transformer, src);
+        this.#convertPixel = (src, srcOffset, dest, destOffset) => {
+          const rgb = qcms_convert_four(
+            this.#transformer,
+            src[srcOffset] * 255,
+            src[srcOffset + 1] * 255,
+            src[srcOffset + 2] * 255,
+            src[srcOffset + 3] * 255,
+          );
+          const R = (rgb >> 16) & 0xff;
+          const G = (rgb >> 8) & 0xff;
+          const B = rgb & 0xff;
+          dest[destOffset] = R;
+          dest[destOffset + 1] = G;
+          dest[destOffset + 2] = B;
+        }
         break;
       default:
         throw new Error(`Unsupported number of components: ${numComps}`);
     }
-    this.#transform = qcms_transform_create(
-      this.#profile,
-      dataType,
-      this.#rgbProfile,
-      DataType.RGB8,
-      Intent.Perceptual
-    );
   }
 
   getRgbItem(src, srcOffset, dest, destOffset) {
-    const srcArray = new Uint8Array(this.numComps);
-    for (let i = 0; i < this.numComps; i++) {
-      srcArray[i] = src[srcOffset + i] * 255;
-    }
-    if (ArrayBuffer.isView(dest)) {
-      qcms_transform_data(
-        this.#transform,
-        srcArray,
-        dest.subarray(destOffset, destOffset + 3)
-      );
-    } else {
-      const output = new Uint8Array(3);
-      qcms_transform_data(this.#transform, srcArray, output);
-      dest.set(output, destOffset);
+    try {
+      this.#convertPixel(src, srcOffset, dest, destOffset);
+    } catch (e) {
+      console.error("FUOFUFOUFOUF", e);
+      throw e;
     }
   }
 
   getRgbBuffer(src, srcOffset, count, dest, destOffset, bits, alpha01) {
-    console.log("getRgbBuffer");
-    // console.log("COUCOU", count, this.numComps, bits, alpha01);
     if (alpha01 === 0) {
-      qcms_transform_data(
-        this.#transform,
+     this.#convertArray(
         src.subarray(srcOffset, srcOffset + count * this.numComps),
         dest.subarray(destOffset, destOffset + count * 3)
       );
     } else {
-      dest = dest.subarray(destOffset, destOffset + count * 4);
-      const output = new Uint8Array(count * 3);
-      qcms_transform_data(
-        this.#transform,
-        src.subarray(srcOffset, srcOffset + count * this.numComps),
-        output
+      console.log("getRgbBuffer", count);
+      let t = performance.now();
+      DEST_BUFFER.buffer = dest.subarray(destOffset, destOffset + count * 4);
+      const result = this.#convertArray(
+        src.subarray(srcOffset, srcOffset + count * this.numComps)
       );
-      for (let i = 0, j = 0, ii = output.length; i < ii; i += 3, j += 4) {
-        dest[j + 0] = output[i + 0];
-        dest[j + 1] = output[i + 1];
-        dest[j + 2] = output[i + 2];
+      console.log("convertArray", performance.now() - t);
+      /*t = performance.now();
+      for (let i = 0, j = 0, ii = result.length; i < ii; i += 3, j += 4) {
+        dest[j + 0] = result[i + 0];
+        dest[j + 1] = result[i + 1];
+        dest[j + 2] = result[i + 2];
       }
+      console.log("copy", performance.now() - t);*/
     }
   }
 
   // getOutputLength(inputLength, alpha01) {}
 
   destroy() {
-    qcms_drop_transform(this.#transform);
-    qcms_drop_profile(this.#profile);
-    qcms_drop_profile(this.#rgbProfile);
+    switch (this.numComps) {
+      case 1:
+        qcms_drop_transformer_one(this.#transformer);
+        break;
+      case 3:
+        qcms_drop_transformer_three(this.#transformer);
+        break;
+      case 4:
+        qcms_drop_transformer_four(this.#transformer);
+        break;
+    }
   }
 
   static #load() {
@@ -120,7 +171,8 @@ class IccColorSpace extends ColorSpace {
     xhr.open("GET", "../../external/qcms/qcms_pdf_js_bg.wasm", false);
     xhr.responseType = "arraybuffer";
     xhr.send(null);
-    return initSync(new Uint8Array(xhr.response));
+    // await WebAssembly.instantiate(this.#buffer, imports);
+    return initSync({ module: new Uint8Array(xhr.response) });
   }
 
   static cleanup() {
