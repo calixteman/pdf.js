@@ -341,6 +341,15 @@ const OPS = {
   setFillTransparent: 93,
 };
 
+// In order to have a switch statement that is fast (i.e. which use a jump
+// table), we need to have the OPS in a contiguous range.
+const DrawOPS = {
+  moveTo: 0,
+  lineTo: 1,
+  curveTo: 2,
+  closePath: 3,
+};
+
 const PasswordResponses = {
   NEED_PASSWORD: 1,
   INCORRECT_PASSWORD: 2,
@@ -1192,6 +1201,7 @@ export {
   bytesToString,
   createValidAbsoluteUrl,
   DocumentActionEventType,
+  DrawOPS,
   FeatureTest,
   FONT_IDENTITY_MATRIX,
   FormatError,
