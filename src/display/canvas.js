@@ -17,7 +17,6 @@ import {
   DrawOPS,
   FeatureTest,
   FONT_IDENTITY_MATRIX,
-  IDENTITY_MATRIX,
   ImageKind,
   info,
   isNodeJS,
@@ -310,7 +309,7 @@ class CanvasExtraState {
     this.alphaIsShape = false;
     this.fontSize = 0;
     this.fontSizeScale = 1;
-    this.textMatrix = IDENTITY_MATRIX;
+    this.textMatrix = null;
     this.textMatrixScale = 1;
     this.fontMatrix = FONT_IDENTITY_MATRIX;
     this.leading = 0;
@@ -1593,7 +1592,7 @@ class CanvasGraphics {
 
   // Text
   beginText() {
-    this.current.textMatrix = IDENTITY_MATRIX;
+    this.current.textMatrix = null;
     this.current.textMatrixScale = 1;
     this.current.x = this.current.lineX = 0;
     this.current.y = this.current.lineY = 0;
@@ -1714,12 +1713,13 @@ class CanvasGraphics {
     this.moveText(x, y);
   }
 
-  setTextMatrix(a, b, c, d, e, f) {
-    this.current.textMatrix = [a, b, c, d, e, f];
-    this.current.textMatrixScale = Math.hypot(a, b);
+  setTextMatrix(matrix) {
+    const { current } = this;
+    current.textMatrix = matrix;
+    current.textMatrixScale = Math.hypot(matrix[0], matrix[1]);
 
-    this.current.x = this.current.lineX = 0;
-    this.current.y = this.current.lineY = 0;
+    current.x = current.lineX = 0;
+    current.y = current.lineY = 0;
   }
 
   nextLine() {
@@ -1886,7 +1886,9 @@ class CanvasGraphics {
       !current.patternFill;
 
     ctx.save();
-    ctx.transform(...current.textMatrix);
+    if (current.textMatrix) {
+      ctx.transform(...current.textMatrix);
+    }
     ctx.translate(current.x, current.y + current.textRise);
 
     if (fontDirection > 0) {
@@ -2081,7 +2083,9 @@ class CanvasGraphics {
     this._cachedGetSinglePixelWidth = null;
 
     ctx.save();
-    ctx.transform(...current.textMatrix);
+    if (current.textMatrix) {
+      ctx.transform(...current.textMatrix);
+    }
     ctx.translate(current.x, current.y + current.textRise);
 
     ctx.scale(textHScale, fontDirection);
