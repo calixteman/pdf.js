@@ -12140,5 +12140,26 @@
     "type": "eq",
     "forms": true,
     "link": true
+  },
+  {
+    "id": "highlights-popup",
+    "file": "pdfs/highlights.pdf",
+    "md5": "55c12c918f3e2253b39b42075cb38205",
+    "rounds": 1,
+    "type": "eq",
+    "lastPage": 1,
+    "save": true,
+    "annotations": true,
+    "annotationStorage": {
+      "pdfjs_internal_editor_0": {
+        "annotationType": 9,
+        "popup": {
+          "contents": "Hello PDF.js World"
+        },
+        "pageIndex": 0,
+        "date": "2013-11-12T14:15:16Z",
+        "id": "612R"
+      }
+    }
   }
 ]
