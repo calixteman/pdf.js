@@ -147,6 +147,10 @@ class HighlightEditor extends AnnotationEditor {
     };
   }
 
+  get commentColor() {
+    return this.color;
+  }
+
   static computeTelemetryFinalData(data) {
     // We want to know how many colors have been used.
     return { numberOfColors: data.get("color").size };
@@ -407,6 +411,9 @@ class HighlightEditor extends AnnotationEditor {
       this.#colorPicker = new ColorPicker({ editor: this });
       toolbar.addColorPicker(this.#colorPicker);
     }
+
+    toolbar.addComment(this.addCommentButton());
+
     return toolbar;
   }
 

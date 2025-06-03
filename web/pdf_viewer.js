@@ -230,6 +230,8 @@ class PDFViewer {
 
   #annotationMode = AnnotationMode.ENABLE_FORMS;
 
+  #commentManager = null;
+
   #containerTopLeft = null;
 
   #editorUndoBar = null;
@@ -311,6 +313,7 @@ class PDFViewer {
     this.downloadManager = options.downloadManager || null;
     this.findController = options.findController || null;
     this.#altTextManager = options.altTextManager || null;
+    this.#commentManager = options.commentManager || null;
     this.#signatureManager = options.signatureManager || null;
     this.#editorUndoBar = options.editorUndoBar || null;
 
@@ -928,6 +931,7 @@ class PDFViewer {
               this.container,
               viewer,
               this.#altTextManager,
+              this.#commentManager,
               this.#signatureManager,
               eventBus,
               pdfDocument,
