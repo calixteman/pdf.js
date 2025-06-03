@@ -630,3 +630,16 @@ pdfjs-editor-edit-signature-dialog-title = Edit description
 ## Dialog buttons
 
 pdfjs-editor-edit-signature-update-button = Update
+
+##  Edit a comment dialog
+pdfjs-editor-comment-actions-button-label = Actions
+pdfjs-editor-comment-actions-button =
+    .title = Actions
+pdfjs-editor-comment-close-button-label = Close
+pdfjs-editor-comment-close-button =
+    .title = Close
+pdfjs-editor-comment-actions-edit-button-label = Edit
+pdfjs-editor-comment-actions-delete-button-label = Delete
+
+pdfjs-editor-edit-comment-manager-cancel-button = Cancel
+pdfjs-editor-edit-comment-manager-save-button = Save

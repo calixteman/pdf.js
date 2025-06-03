@@ -30,6 +30,7 @@ import {
 } from "../../shared/util.js";
 import { noContextMenu, stopEvent } from "../display_utils.js";
 import { AltText } from "./alt_text.js";
+import { Comment } from "./comment.js";
 import { EditorToolbar } from "./toolbar.js";
 import { TouchManager } from "../touch_manager.js";
 
@@ -51,6 +52,8 @@ class AnnotationEditor {
   #allResizerDivs = null;
 
   #altText = null;
+
+  #comment = null;
 
   #disabled = false;
 
@@ -1136,6 +1139,36 @@ class AnnotationEditor {
 
   hasAltTextData() {
     return this.#altText?.hasData() ?? false;
+  }
+
+  addCommentButton() {
+    if (this.#comment) {
+      return this.#comment;
+    }
+    return (this.#comment = new Comment(this));
+  }
+
+  get commentColor() {
+    return null;
+  }
+
+  get comment() {
+    return {
+      text: this.#comment.data.text,
+      deleted: this.#comment.data.deleted,
+      color: this.commentColor,
+    };
+  }
+
+  set comment(text) {
+    if (!this.#comment) {
+      this.#comment = new Comment(this);
+    }
+    this.#comment.data = text;
+  }
+
+  get hasComment() {
+    return !!this.#comment;
   }
 
   /**

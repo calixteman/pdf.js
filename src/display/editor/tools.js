@@ -597,6 +597,8 @@ class AnnotationEditorUIManager {
 
   #commandManager = new CommandManager();
 
+  #commentManager = null;
+
   #copyPasteAC = null;
 
   #currentDrawingSession = null;
@@ -819,6 +821,7 @@ class AnnotationEditorUIManager {
     container,
     viewer,
     altTextManager,
+    commentManager,
     signatureManager,
     eventBus,
     pdfDocument,
@@ -835,6 +838,7 @@ class AnnotationEditorUIManager {
     this.#container = container;
     this.#viewer = viewer;
     this.#altTextManager = altTextManager;
+    this.#commentManager = commentManager;
     this.#signatureManager = signatureManager;
     this._eventBus = eventBus;
     eventBus._on("editingaction", this.onEditingAction.bind(this), { signal });
@@ -898,6 +902,7 @@ class AnnotationEditorUIManager {
     this.#selectedEditors.clear();
     this.#commandManager.destroy();
     this.#altTextManager?.destroy();
+    this.#commentManager?.destroy();
     this.#signatureManager?.destroy();
     this.#highlightToolbar?.hide();
     this.#highlightToolbar = null;
@@ -995,6 +1000,10 @@ class AnnotationEditorUIManager {
 
   editAltText(editor, firstTime = false) {
     this.#altTextManager?.editAltText(this, editor, firstTime);
+  }
+
+  editComment(editor, position) {
+    this.#commentManager?.open(this, editor, position);
   }
 
   getSignature(editor) {
