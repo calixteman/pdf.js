@@ -230,6 +230,8 @@ class PDFViewer {
 
   #annotationMode = AnnotationMode.ENABLE_FORMS;
 
+  #commentManager = null;
+
   #containerTopLeft = null;
 
   #editorUndoBar = null;
@@ -311,6 +313,7 @@ class PDFViewer {
     this.downloadManager = options.downloadManager || null;
     this.findController = options.findController || null;
     this.#altTextManager = options.altTextManager || null;
+    this.#commentManager = options.commentManager || null;
     this.#signatureManager = options.signatureManager || null;
     this.#editorUndoBar = options.editorUndoBar || null;
 
@@ -928,6 +931,7 @@ class PDFViewer {
               this.container,
               viewer,
               this.#altTextManager,
+              this.#commentManager,
               this.#signatureManager,
               eventBus,
               pdfDocument,
@@ -2395,6 +2399,8 @@ class PDFViewer {
    * @typedef {Object} AnnotationEditorModeOptions
    * @property {number} mode - The editor mode (none, FreeText, ink, ...).
    * @property {string|null} [editId] - ID of the existing annotation to edit.
+   * @property {boolean|undefined} [editComment] - Must edit the associated
+   *   comment of the annotation.
    * @property {boolean} [isFromKeyboard] - True if the mode change is due to a
    *   keyboard action.
    */
@@ -2402,7 +2408,12 @@ class PDFViewer {
   /**
    * @param {AnnotationEditorModeOptions} options
    */
-  set annotationEditorMode({ mode, editId = null, isFromKeyboard = false }) {
+  set annotationEditorMode({
+    mode,
+    editId = null,
+    isFromKeyboard = false,
+    editComment = false,
+  }) {
     if (!this.#annotationEditorUIManager) {
       throw new Error(`The AnnotationEditor is not enabled.`);
     }
@@ -2424,7 +2435,8 @@ class PDFViewer {
       await this.#annotationEditorUIManager.updateMode(
         mode,
         editId,
-        isFromKeyboard
+        isFromKeyboard,
+        editComment
       );
       if (
         mode !== this.#annotationEditorMode ||
