@@ -26,6 +26,8 @@ class EditorToolbar {
 
   #altText = null;
 
+  #comment = null;
+
   #signatureDescriptionButton = null;
 
   static #l10nRemove = null;
@@ -116,6 +118,7 @@ class EditorToolbar {
   show() {
     this.#toolbar.classList.remove("hidden");
     this.#altText?.shown();
+    this.#comment?.shown();
   }
 
   #addDeleteButton() {
@@ -149,7 +152,21 @@ class EditorToolbar {
     this.#altText = altText;
   }
 
+  addComment(comment) {
+    if (this.#comment) {
+      return;
+    }
+    const button = comment.render();
+    this.#addListenersToElement(button);
+    this.#buttons.prepend(button, this.#divider);
+    this.#comment = comment;
+    comment.toolbar = this;
+  }
+
   addColorPicker(colorPicker) {
+    if (this.#colorPicker) {
+      return;
+    }
     this.#colorPicker = colorPicker;
     const button = colorPicker.renderButton();
     this.#addListenersToElement(button);
@@ -173,6 +190,14 @@ class EditorToolbar {
     this.#toolbar.remove();
     this.#colorPicker?.destroy();
     this.#colorPicker = null;
+  }
+
+  getPosition() {
+    const { top, left, right } = this.#toolbar.getBoundingClientRect();
+    if (this.#editor._uiManager.direction === "ltr") {
+      return { top, right };
+    }
+    return { top, left };
   }
 }
 

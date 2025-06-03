@@ -147,6 +147,10 @@ class HighlightEditor extends AnnotationEditor {
     };
   }
 
+  get commentColor() {
+    return this.color;
+  }
+
   static computeTelemetryFinalData(data) {
     // We want to know how many colors have been used.
     return { numberOfColors: data.get("color").size };
@@ -407,6 +411,9 @@ class HighlightEditor extends AnnotationEditor {
       this.#colorPicker = new ColorPicker({ editor: this });
       toolbar.addColorPicker(this.#colorPicker);
     }
+
+    toolbar.addComment(this.addCommentButton());
+
     return toolbar;
   }
 
@@ -864,7 +871,16 @@ class HighlightEditor extends AnnotationEditor {
     let initialData = null;
     if (data instanceof HighlightAnnotationElement) {
       const {
-        data: { quadPoints, rect, rotation, id, color, opacity, popupRef },
+        data: {
+          quadPoints,
+          rect,
+          rotation,
+          id,
+          color,
+          opacity,
+          popupRef,
+          contentsObj,
+        },
         parent: {
           page: { pageNumber },
         },
@@ -881,6 +897,7 @@ class HighlightEditor extends AnnotationEditor {
         id,
         deleted: false,
         popupRef,
+        comment: contentsObj?.str || null,
       };
     } else if (data instanceof InkAnnotationElement) {
       const {
@@ -892,6 +909,7 @@ class HighlightEditor extends AnnotationEditor {
           color,
           borderStyle: { rawWidth: thickness },
           popupRef,
+          contentsObj,
         },
         parent: {
           page: { pageNumber },
@@ -909,6 +927,7 @@ class HighlightEditor extends AnnotationEditor {
         id,
         deleted: false,
         popupRef,
+        comment: contentsObj?.str || null,
       };
     }
 
@@ -922,6 +941,9 @@ class HighlightEditor extends AnnotationEditor {
     }
     editor.annotationElementId = data.id || null;
     editor._initialData = initialData;
+    if (data.comment) {
+      editor.setCommentData(data.comment);
+    }
 
     const [pageWidth, pageHeight] = editor.pageDimensions;
     const [pageX, pageY] = editor.pageTranslation;
@@ -1017,6 +1039,13 @@ class HighlightEditor extends AnnotationEditor {
       structTreeParentId: this._structTreeParentId,
     };
 
+    if (this.hasEditedComment) {
+      serialized.popup = {
+        contents: this.comment.text,
+        deleted: this.comment.deleted,
+      };
+    }
+
     if (this.annotationElementId && !this.#hasElementChanged(serialized)) {
       return null;
     }
@@ -1027,14 +1056,19 @@ class HighlightEditor extends AnnotationEditor {
 
   #hasElementChanged(serialized) {
     const { color } = this._initialData;
-    return serialized.color.some((c, i) => c !== color[i]);
+    return (
+      this.hasEditedComment || serialized.color.some((c, i) => c !== color[i])
+    );
   }
 
   /** @inheritdoc */
   renderAnnotationElement(annotation) {
-    annotation.updateEdited({
-      rect: this.getRect(0, 0),
-    });
+    const params = Object.create(null);
+    if (this.hasEditedComment) {
+      const { comment } = this;
+      params.popup = comment;
+    }
+    annotation.updateEdited(params);
 
     return null;
   }

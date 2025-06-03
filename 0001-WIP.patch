@@ -1,0 +1,1903 @@
+From 14d0fc837ea9f2985477fddfdc4879800e123191 Mon Sep 17 00:00:00 2001
+From: Calixte Denizet <calixte.denizet@gmail.com>
+Date: Tue, 3 Jun 2025 18:40:00 +0200
+Subject: [PATCH] WIP
+
+---
+ l10n/en-US/viewer.ftl                   |  20 ++
+ src/display/annotation_layer.js         | 208 ++++++++++++-
+ src/display/display_utils.js            |   3 +
+ src/display/editor/comment.js           | 145 ++++++++++
+ src/display/editor/editor.js            |  50 ++++
+ src/display/editor/freetext.js          |   4 +-
+ src/display/editor/highlight.js         |  44 ++-
+ src/display/editor/toolbar.js           |  25 ++
+ src/display/editor/tools.js             |  24 +-
+ src/pdf.js                              |   3 +
+ src/shared/util.js                      |   1 +
+ web/annotation_editor_layer_builder.css |  17 ++
+ web/annotation_layer_builder.css        |   1 +
+ web/app.js                              |   6 +
+ web/app_options.js                      |   5 +
+ web/comment_manager.css                 | 275 ++++++++++++++++++
+ web/comment_manager.js                  | 370 ++++++++++++++++++++++++
+ web/images/comment_actionsButton.svg    |   3 +
+ web/images/comment_closeButton.svg      |   3 +
+ web/images/comment_editButton.svg       |   3 +
+ web/pdf_viewer.js                       |  16 +-
+ web/pdfjs.js                            |   2 +
+ web/viewer.html                         |  31 ++
+ web/viewer.js                           |  13 +
+ 24 files changed, 1246 insertions(+), 26 deletions(-)
+ create mode 100644 src/display/editor/comment.js
+ create mode 100644 web/comment_manager.css
+ create mode 100644 web/comment_manager.js
+ create mode 100644 web/images/comment_actionsButton.svg
+ create mode 100644 web/images/comment_closeButton.svg
+ create mode 100644 web/images/comment_editButton.svg
+
+diff --git a/l10n/en-US/viewer.ftl b/l10n/en-US/viewer.ftl
+index 07efee7e9..2a4abae85 100644
+--- a/l10n/en-US/viewer.ftl
++++ b/l10n/en-US/viewer.ftl
+@@ -630,3 +630,23 @@ pdfjs-editor-edit-signature-dialog-title = Edit description
+ ## Dialog buttons
+ 
+ pdfjs-editor-edit-signature-update-button = Update
++
++##  Edit a comment dialog
++
++pdfjs-editor-comment-actions-button-label = Actions
++pdfjs-editor-comment-actions-button =
++    .title = Actions
++pdfjs-editor-comment-close-button-label = Close
++pdfjs-editor-comment-close-button =
++    .title = Close
++pdfjs-editor-comment-actions-edit-button-label = Edit
++pdfjs-editor-comment-actions-delete-button-label = Delete
++
++pdfjs-editor-edit-comment-manager-cancel-button = Cancel
++pdfjs-editor-edit-comment-manager-save-button = Save
++
++## Edit a comment button in the editor toolbar
++
++pdfjs-editor-comment-button-label = Edit comment
++pdfjs-editor-comment-button =
++    .title = Edit comment
+diff --git a/src/display/annotation_layer.js b/src/display/annotation_layer.js
+index 8afd21829..fa2e45d24 100644
+--- a/src/display/annotation_layer.js
++++ b/src/display/annotation_layer.js
+@@ -198,22 +198,65 @@ class AnnotationElement {
+     return AnnotationElement._hasPopupData(this.data);
+   }
+ 
++  get hasCommentButton() {
++    return false;
++  }
++
++  get commentButtonPosition() {
++    const { quadPoints, rect } = this.data;
++    if (quadPoints?.length >= 2) {
++      return quadPoints.slice(0, 2);
++    }
++    if (rect) {
++      return [rect[0], rect[3]];
++    }
++    return null;
++  }
++
++  normalizePoint(point) {
++    const {
++      page: { view },
++      viewport: {
++        rawDims: { pageWidth, pageHeight, pageX, pageY },
++      },
++    } = this.parent;
++    point[1] = view[3] - point[1] + view[1];
++    point[0] = (100 * (point[0] - pageX)) / pageWidth;
++    point[1] = (100 * (point[1] - pageY)) / pageHeight;
++    return point;
++  }
++
+   updateEdited(params) {
+     if (!this.container) {
+       return;
+     }
+ 
+-    this.#updates ||= {
+-      rect: this.data.rect.slice(0),
+-    };
++    if (params.rect) {
++      this.#updates ||= {
++        rect: this.data.rect.slice(0),
++      };
++    }
+ 
+-    const { rect } = params;
++    const { rect, popup: newPopup } = params;
+ 
+     if (rect) {
+       this.#setRectEdited(rect);
+     }
+ 
+-    this.#popupElement?.popup.updateEdited(params);
++    let popup = this.#popupElement?.popup || this.popup;
++    if (!popup && newPopup.text) {
++      this._createPopup(newPopup);
++      popup = this.#popupElement;
++    }
++    if (!popup) {
++      return;
++    }
++    popup.updateEdited(params);
++    if (newPopup.deleted) {
++      popup.remove();
++      this.#popupElement = null;
++      this.popup = null;
++    }
+   }
+ 
+   resetEdited() {
+@@ -272,7 +315,9 @@ class AnnotationElement {
+     // But if an annotation is above an other one, then we must draw it
+     // after the other one whatever the order is in the DOM, hence the
+     // use of the z-index.
+-    style.zIndex = this.parent.zIndex++;
++    style.zIndex = this.parent.zIndex;
++    // Keep zIndex + 1 for stuff we want tot add on top of this annotation.
++    this.parent.zIndex += 2;
+ 
+     if (data.alternativeText) {
+       container.title = data.alternativeText;
+@@ -601,27 +646,42 @@ class AnnotationElement {
+    * @private
+    * @memberof AnnotationElement
+    */
+-  _createPopup() {
++  _createPopup(popupData = null) {
+     const { data } = this;
+ 
++    let contentsObj, modificationDate;
++    if (popupData) {
++      contentsObj = {
++        str: popupData.text,
++      };
++      modificationDate = popupData.date;
++    } else {
++      contentsObj = data.contentsObj;
++      modificationDate = data.modificationDate;
++    }
+     const popup = (this.#popupElement = new PopupAnnotationElement({
+       data: {
+         color: data.color,
+         titleObj: data.titleObj,
+-        modificationDate: data.modificationDate,
+-        contentsObj: data.contentsObj,
++        modificationDate,
++        contentsObj,
+         richText: data.richText,
+         parentRect: data.rect,
+         borderStyle: 0,
+         id: `popup_${data.id}`,
+         rotation: data.rotation,
+       },
++      linkService: this.linkService,
+       parent: this.parent,
+       elements: [this],
+     }));
+     this.parent.div.append(popup.render());
+   }
+ 
++  get hasPopupElement() {
++    return !!(this.#popupElement || this.popup || this.data.popupRef);
++  }
++
+   /**
+    * Render the annotation's HTML element(s).
+    *
+@@ -2071,6 +2131,7 @@ class PopupAnnotationElement extends AnnotationElement {
+       parent: this.parent,
+       elements: this.elements,
+       open: this.data.open,
++      eventBus: this.linkService.eventBus,
+     }));
+ 
+     const elementIds = [];
+@@ -2119,6 +2180,10 @@ class PopupElement {
+ 
+   #position = null;
+ 
++  #commentButton = null;
++
++  #commentButtonPosition = null;
++
+   #rect = null;
+ 
+   #richText = null;
+@@ -2129,6 +2194,10 @@ class PopupElement {
+ 
+   #wasVisible = false;
+ 
++  #popupAbortController = null;
++
++  #eventBus = null;
++
+   constructor({
+     container,
+     color,
+@@ -2141,6 +2210,7 @@ class PopupElement {
+     rect,
+     parentRect,
+     open,
++    eventBus = null,
+   }) {
+     this.#container = container;
+     this.#titleObj = titleObj;
+@@ -2151,26 +2221,33 @@ class PopupElement {
+     this.#rect = rect;
+     this.#parentRect = parentRect;
+     this.#elements = elements;
++    this.#eventBus = eventBus;
+ 
+     // The modification date is shown in the popup instead of the creation
+     // date if it is available and can be parsed correctly, which is
+     // consistent with other viewers such as Adobe Acrobat.
+     this.#dateObj = PDFDateString.toDateObject(modificationDate);
+ 
++    this.#popupAbortController = new AbortController();
++    const { signal } = this.#popupAbortController;
+     this.trigger = elements.flatMap(e => e.getElementsToTriggerPopup());
+     // Attach the event listeners to the trigger element.
+     for (const element of this.trigger) {
+-      element.addEventListener("click", this.#boundToggle);
+-      element.addEventListener("mouseenter", this.#boundShow);
+-      element.addEventListener("mouseleave", this.#boundHide);
++      element.addEventListener("click", this.#boundToggle, { signal });
++      element.addEventListener("mouseenter", this.#boundShow, { signal });
++      element.addEventListener("mouseleave", this.#boundHide, { signal });
+       element.classList.add("popupTriggerArea");
+     }
+ 
+     // Attach the event listener to toggle the popup with the keyboard.
+     for (const element of elements) {
+-      element.container?.addEventListener("keydown", this.#boundKeyDown);
++      element.container?.addEventListener("keydown", this.#boundKeyDown, {
++        signal,
++      });
+     }
+ 
++    this.#renderCommentButton();
++
+     this.#container.hidden = true;
+     if (open) {
+       this.#toggle();
+@@ -2187,6 +2264,62 @@ class PopupElement {
+     }
+   }
+ 
++  #setCommentButtonPosition() {
++    const element = this.#elements.find(e => e.hasCommentButton);
++    if (!element) {
++      return;
++    }
++    this.#commentButtonPosition = element.normalizePoint(
++      element.commentButtonPosition
++    );
++  }
++
++  #renderCommentButton() {
++    if (this.#commentButton) {
++      return;
++    }
++
++    if (!this.#commentButtonPosition) {
++      this.#setCommentButtonPosition();
++    }
++
++    if (!this.#commentButtonPosition) {
++      return;
++    }
++
++    const button = (this.#commentButton = document.createElement("button"));
++    button.className = "annotationCommentButton";
++    const parentContainer = this.#elements[0].container;
++    button.style.zIndex = parentContainer.style.zIndex + 1;
++    button.tabIndex = DEFAULT_TAB_INDEX;
++
++    const { signal } = this.#popupAbortController;
++    button.addEventListener("hover", this.#boundToggle, { signal });
++    button.addEventListener("keydown", this.#boundKeyDown, { signal });
++    button.addEventListener(
++      "click",
++      () => {
++        const [
++          {
++            data: { id: editId },
++            annotationEditorType: mode,
++          },
++        ] = this.#elements;
++        this.#eventBus?.dispatch("switchannotationeditormode", {
++          source: this,
++          editId,
++          mode,
++          editComment: true,
++        });
++      },
++      { signal }
++    );
++    const { style } = button;
++    style.left = `calc(${this.#commentButtonPosition[0]}% - var(--comment-button-offset))`;
++    style.top = `calc(${this.#commentButtonPosition[1]}% - var(--comment-button-offset))`;
++    parentContainer.after(button);
++  }
++
+   render() {
+     if (this.#popup) {
+       return;
+@@ -2326,7 +2459,7 @@ class PopupElement {
+     }
+   }
+ 
+-  updateEdited({ rect, popupContent }) {
++  updateEdited({ rect, popup }) {
+     this.#updates ||= {
+       contentsObj: this.#contentsObj,
+       richText: this.#richText,
+@@ -2334,8 +2467,9 @@ class PopupElement {
+     if (rect) {
+       this.#position = null;
+     }
+-    if (popupContent) {
+-      this.#richText = this.#makePopupContent(popupContent);
++    if (popup) {
++      this.#richText = this.#makePopupContent(popup.text);
++      this.#dateObj = PDFDateString.toDateObject(popup.date);
+       this.#contentsObj = null;
+     }
+     this.#popup?.remove();
+@@ -2354,6 +2488,16 @@ class PopupElement {
+     this.#position = null;
+   }
+ 
++  remove() {
++    this.#popupAbortController.abort();
++    this.#popupAbortController = null;
++    this.#popup?.remove();
++    this.#popup = null;
++    for (const element of this.trigger) {
++      element.classList.remove("popupTriggerArea");
++    }
++  }
++
+   #setPosition() {
+     if (this.#position !== null) {
+       return;
+@@ -2818,6 +2962,34 @@ class InkAnnotationElement extends AnnotationElement {
+     }
+   }
+ 
++  get hasCommentButton() {
++    return (
++      this.annotationEditorType === AnnotationEditorType.HIGHLIGHT &&
++      this.hasPopupElement
++    );
++  }
++
++  get commentButtonPosition() {
++    const { inkLists, rect } = this.data;
++    if (inkLists?.length >= 1) {
++      let x = Infinity;
++      let y = -Infinity;
++      for (const inkList of inkLists) {
++        for (let i = 0, ii = inkList.length; i < ii; i += 2) {
++          x = Math.min(x, inkList[i]);
++          y = Math.max(y, inkList[i + 1]);
++        }
++      }
++      if (x !== Infinity) {
++        return [x, y];
++      }
++    }
++    if (rect) {
++      return [rect[0], rect[3]];
++    }
++    return null;
++  }
++
+   render() {
+     this.container.classList.add(this.containerClassName);
+ 
+@@ -2905,6 +3077,10 @@ class HighlightAnnotationElement extends AnnotationElement {
+     this.annotationEditorType = AnnotationEditorType.HIGHLIGHT;
+   }
+ 
++  get hasCommentButton() {
++    return this.hasPopupElement;
++  }
++
+   render() {
+     if (!this.data.popupRef && this.hasPopupData) {
+       this._createPopup();
+diff --git a/src/display/display_utils.js b/src/display/display_utils.js
+index c724b16e3..2474d275f 100644
+--- a/src/display/display_utils.js
++++ b/src/display/display_utils.js
+@@ -451,6 +451,9 @@ class PDFDateString {
+    * @returns {Date|null}
+    */
+   static toDateObject(input) {
++    if (input instanceof Date) {
++      return input;
++    }
+     if (!input || typeof input !== "string") {
+       return null;
+     }
+diff --git a/src/display/editor/comment.js b/src/display/editor/comment.js
+new file mode 100644
+index 000000000..5ac7b5e39
+--- /dev/null
++++ b/src/display/editor/comment.js
+@@ -0,0 +1,145 @@
++/* Copyright 2023 Mozilla Foundation
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import { noContextMenu } from "../display_utils.js";
++
++class Comment {
++  #commentButton = null;
++
++  #commentWasFromKeyBoard = false;
++
++  #editor = null;
++
++  #initialText = null;
++
++  #text = null;
++
++  #date = null;
++
++  #deleted = false;
++
++  constructor(editor) {
++    this.#editor = editor;
++    this.toolbar = null;
++  }
++
++  render() {
++    const comment = (this.#commentButton = document.createElement("button"));
++    comment.className = "comment";
++    comment.tabIndex = "0";
++    comment.setAttribute("data-l10n-id", "pdfjs-editor-comment-button");
++
++    const label = document.createElement("span");
++    label.setAttribute("data-l10n-id", "pdfjs-editor-comment-button-label");
++    comment.append(label);
++
++    const signal = this.#editor._uiManager._signal;
++    comment.addEventListener("contextmenu", noContextMenu, { signal });
++    comment.addEventListener("pointerdown", event => event.stopPropagation(), {
++      signal,
++    });
++
++    const onClick = event => {
++      event.preventDefault();
++      this.edit();
++    };
++    comment.addEventListener("click", onClick, { capture: true, signal });
++    comment.addEventListener(
++      "keydown",
++      event => {
++        if (event.target === comment && event.key === "Enter") {
++          this.#commentWasFromKeyBoard = true;
++          onClick(event);
++        }
++      },
++      { signal }
++    );
++
++    return comment;
++  }
++
++  edit() {
++    const position = this.toolbar.getPosition();
++    this.#editor._uiManager.editComment(this.#editor, position);
++  }
++
++  finish() {
++    if (!this.#commentButton) {
++      return;
++    }
++    this.#commentButton.focus({ focusVisible: this.#commentWasFromKeyBoard });
++    this.#commentWasFromKeyBoard = false;
++  }
++
++  isDeleted() {
++    return this.#deleted || this.#text === "";
++  }
++
++  hasBeenEdited() {
++    return this.isDeleted() || this.#text !== this.#initialText;
++  }
++
++  serialize() {
++    return this.data;
++  }
++
++  get data() {
++    return {
++      text: this.#text,
++      date: this.#date,
++      deleted: this.#deleted,
++    };
++  }
++
++  /**
++   * Set the alt text data.
++   */
++  set data(text) {
++    if (text === null) {
++      this.#text = "";
++      this.#deleted = true;
++      return;
++    }
++    this.#text = text;
++    this.#date = new Date();
++    this.#deleted = false;
++  }
++
++  setInitialText(text) {
++    this.#initialText = text;
++    this.data = text;
++  }
++
++  toggle(enabled = false) {
++    if (!this.#commentButton) {
++      return;
++    }
++    this.#commentButton.disabled = !enabled;
++  }
++
++  shown() {}
++
++  destroy() {
++    this.#commentButton?.remove();
++    this.#commentButton = null;
++    this.#text = "";
++    this.#date = null;
++    this.#editor = null;
++    this.#commentWasFromKeyBoard = false;
++    this.#deleted = false;
++  }
++}
++
++export { Comment };
+diff --git a/src/display/editor/editor.js b/src/display/editor/editor.js
+index 868490259..b6b99f698 100644
+--- a/src/display/editor/editor.js
++++ b/src/display/editor/editor.js
+@@ -30,6 +30,7 @@ import {
+ } from "../../shared/util.js";
+ import { noContextMenu, stopEvent } from "../display_utils.js";
+ import { AltText } from "./alt_text.js";
++import { Comment } from "./comment.js";
+ import { EditorToolbar } from "./toolbar.js";
+ import { TouchManager } from "../touch_manager.js";
+ 
+@@ -52,6 +53,8 @@ class AnnotationEditor {
+ 
+   #altText = null;
+ 
++  #comment = null;
++
+   #disabled = false;
+ 
+   #dragPointerId = null;
+@@ -1138,6 +1141,53 @@ class AnnotationEditor {
+     return this.#altText?.hasData() ?? false;
+   }
+ 
++  addCommentButton() {
++    if (this.#comment) {
++      return this.#comment;
++    }
++    return (this.#comment = new Comment(this));
++  }
++
++  get commentColor() {
++    return null;
++  }
++
++  get comment() {
++    const comment = this.#comment;
++    return {
++      text: comment.data.text,
++      date: comment.data.date,
++      deleted: comment.isDeleted(),
++      color: this.commentColor,
++    };
++  }
++
++  set comment(text) {
++    if (!this.#comment) {
++      this.#comment = new Comment(this);
++    }
++    this.#comment.data = text;
++  }
++
++  setCommentData(text) {
++    if (!this.#comment) {
++      this.#comment = new Comment(this);
++    }
++    this.#comment.setInitialText(text);
++  }
++
++  get hasEditedComment() {
++    return this.#comment?.hasBeenEdited();
++  }
++
++  async editComment() {
++    if (!this.#comment) {
++      this.#comment = new Comment(this);
++    }
++    await this.addEditToolbar();
++    this.#comment.edit();
++  }
++
+   /**
+    * Render this editor in a div.
+    * @returns {HTMLDivElement | null}
+diff --git a/src/display/editor/freetext.js b/src/display/editor/freetext.js
+index 15969a2f8..e8f54f048 100644
+--- a/src/display/editor/freetext.js
++++ b/src/display/editor/freetext.js
+@@ -876,7 +876,9 @@ class FreeTextEditor extends AnnotationEditor {
+     const padding = FreeTextEditor._internalPadding * this.parentScale;
+     annotation.updateEdited({
+       rect: this.getRect(padding, padding),
+-      popupContent: this.#content,
++      popup: {
++        text: this.#content,
++      },
+     });
+ 
+     return content;
+diff --git a/src/display/editor/highlight.js b/src/display/editor/highlight.js
+index 86626a62c..9af1ba928 100644
+--- a/src/display/editor/highlight.js
++++ b/src/display/editor/highlight.js
+@@ -147,6 +147,10 @@ class HighlightEditor extends AnnotationEditor {
+     };
+   }
+ 
++  get commentColor() {
++    return this.color;
++  }
++
+   static computeTelemetryFinalData(data) {
+     // We want to know how many colors have been used.
+     return { numberOfColors: data.get("color").size };
+@@ -407,6 +411,9 @@ class HighlightEditor extends AnnotationEditor {
+       this.#colorPicker = new ColorPicker({ editor: this });
+       toolbar.addColorPicker(this.#colorPicker);
+     }
++
++    toolbar.addComment(this.addCommentButton());
++
+     return toolbar;
+   }
+ 
+@@ -864,7 +871,16 @@ class HighlightEditor extends AnnotationEditor {
+     let initialData = null;
+     if (data instanceof HighlightAnnotationElement) {
+       const {
+-        data: { quadPoints, rect, rotation, id, color, opacity, popupRef },
++        data: {
++          quadPoints,
++          rect,
++          rotation,
++          id,
++          color,
++          opacity,
++          popupRef,
++          contentsObj,
++        },
+         parent: {
+           page: { pageNumber },
+         },
+@@ -881,6 +897,7 @@ class HighlightEditor extends AnnotationEditor {
+         id,
+         deleted: false,
+         popupRef,
++        comment: contentsObj?.str || null,
+       };
+     } else if (data instanceof InkAnnotationElement) {
+       const {
+@@ -892,6 +909,7 @@ class HighlightEditor extends AnnotationEditor {
+           color,
+           borderStyle: { rawWidth: thickness },
+           popupRef,
++          contentsObj,
+         },
+         parent: {
+           page: { pageNumber },
+@@ -909,6 +927,7 @@ class HighlightEditor extends AnnotationEditor {
+         id,
+         deleted: false,
+         popupRef,
++        comment: contentsObj?.str || null,
+       };
+     }
+ 
+@@ -922,6 +941,9 @@ class HighlightEditor extends AnnotationEditor {
+     }
+     editor.annotationElementId = data.id || null;
+     editor._initialData = initialData;
++    if (data.comment) {
++      editor.setCommentData(data.comment);
++    }
+ 
+     const [pageWidth, pageHeight] = editor.pageDimensions;
+     const [pageX, pageY] = editor.pageTranslation;
+@@ -1017,6 +1039,13 @@ class HighlightEditor extends AnnotationEditor {
+       structTreeParentId: this._structTreeParentId,
+     };
+ 
++    if (this.hasEditedComment) {
++      serialized.popup = {
++        contents: this.comment.text,
++        deleted: this.comment.deleted,
++      };
++    }
++
+     if (this.annotationElementId && !this.#hasElementChanged(serialized)) {
+       return null;
+     }
+@@ -1027,14 +1056,19 @@ class HighlightEditor extends AnnotationEditor {
+ 
+   #hasElementChanged(serialized) {
+     const { color } = this._initialData;
+-    return serialized.color.some((c, i) => c !== color[i]);
++    return (
++      this.hasEditedComment || serialized.color.some((c, i) => c !== color[i])
++    );
+   }
+ 
+   /** @inheritdoc */
+   renderAnnotationElement(annotation) {
+-    annotation.updateEdited({
+-      rect: this.getRect(0, 0),
+-    });
++    const params = Object.create(null);
++    if (this.hasEditedComment) {
++      const { comment } = this;
++      params.popup = comment;
++    }
++    annotation.updateEdited(params);
+ 
+     return null;
+   }
+diff --git a/src/display/editor/toolbar.js b/src/display/editor/toolbar.js
+index 715a4b820..a053ac9b9 100644
+--- a/src/display/editor/toolbar.js
++++ b/src/display/editor/toolbar.js
+@@ -26,6 +26,8 @@ class EditorToolbar {
+ 
+   #altText = null;
+ 
++  #comment = null;
++
+   #signatureDescriptionButton = null;
+ 
+   static #l10nRemove = null;
+@@ -116,6 +118,7 @@ class EditorToolbar {
+   show() {
+     this.#toolbar.classList.remove("hidden");
+     this.#altText?.shown();
++    this.#comment?.shown();
+   }
+ 
+   #addDeleteButton() {
+@@ -149,7 +152,21 @@ class EditorToolbar {
+     this.#altText = altText;
+   }
+ 
++  addComment(comment) {
++    if (this.#comment) {
++      return;
++    }
++    const button = comment.render();
++    this.#addListenersToElement(button);
++    this.#buttons.prepend(button, this.#divider);
++    this.#comment = comment;
++    comment.toolbar = this;
++  }
++
+   addColorPicker(colorPicker) {
++    if (this.#colorPicker) {
++      return;
++    }
+     this.#colorPicker = colorPicker;
+     const button = colorPicker.renderButton();
+     this.#addListenersToElement(button);
+@@ -174,6 +191,14 @@ class EditorToolbar {
+     this.#colorPicker?.destroy();
+     this.#colorPicker = null;
+   }
++
++  getPosition() {
++    const { top, left, right } = this.#toolbar.getBoundingClientRect();
++    if (this.#editor._uiManager.direction === "ltr") {
++      return { top, right };
++    }
++    return { top, left };
++  }
+ }
+ 
+ class HighlightToolbar {
+diff --git a/src/display/editor/tools.js b/src/display/editor/tools.js
+index e2663e7e4..dc2c8a683 100644
+--- a/src/display/editor/tools.js
++++ b/src/display/editor/tools.js
+@@ -597,6 +597,8 @@ class AnnotationEditorUIManager {
+ 
+   #commandManager = new CommandManager();
+ 
++  #commentManager = null;
++
+   #copyPasteAC = null;
+ 
+   #currentDrawingSession = null;
+@@ -819,6 +821,7 @@ class AnnotationEditorUIManager {
+     container,
+     viewer,
+     altTextManager,
++    commentManager,
+     signatureManager,
+     eventBus,
+     pdfDocument,
+@@ -835,6 +838,7 @@ class AnnotationEditorUIManager {
+     this.#container = container;
+     this.#viewer = viewer;
+     this.#altTextManager = altTextManager;
++    this.#commentManager = commentManager;
+     this.#signatureManager = signatureManager;
+     this._eventBus = eventBus;
+     eventBus._on("editingaction", this.onEditingAction.bind(this), { signal });
+@@ -898,6 +902,7 @@ class AnnotationEditorUIManager {
+     this.#selectedEditors.clear();
+     this.#commandManager.destroy();
+     this.#altTextManager?.destroy();
++    this.#commentManager?.destroy();
+     this.#signatureManager?.destroy();
+     this.#highlightToolbar?.hide();
+     this.#highlightToolbar = null;
+@@ -997,6 +1002,10 @@ class AnnotationEditorUIManager {
+     this.#altTextManager?.editAltText(this, editor, firstTime);
+   }
+ 
++  editComment(editor, position) {
++    this.#commentManager?.open(this, editor, position);
++  }
++
+   getSignature(editor) {
+     this.#signatureManager?.getSignature({ uiManager: this, editor });
+   }
+@@ -1665,8 +1674,15 @@ class AnnotationEditorUIManager {
+    * @param {string|null} editId
+    * @param {boolean} [isFromKeyboard] - true if the mode change is due to a
+    *   keyboard action.
++   * @param {boolean} [editComment] - true if the mode change is due to a
++   *   comment edit.
+    */
+-  async updateMode(mode, editId = null, isFromKeyboard = false) {
++  async updateMode(
++    mode,
++    editId = null,
++    isFromKeyboard = false,
++    editComment = false
++  ) {
+     if (this.#mode === mode) {
+       return;
+     }
+@@ -1713,7 +1729,11 @@ class AnnotationEditorUIManager {
+     for (const editor of this.#allEditors.values()) {
+       if (editor.annotationElementId === editId || editor.id === editId) {
+         this.setSelected(editor);
+-        editor.enterInEditMode();
++        if (editComment) {
++          editor.editComment();
++        } else {
++          editor.enterInEditMode();
++        }
+       } else {
+         editor.unselect();
+       }
+diff --git a/src/pdf.js b/src/pdf.js
+index c8c0d82a2..d5cc9aff9 100644
+--- a/src/pdf.js
++++ b/src/pdf.js
+@@ -55,6 +55,7 @@ import {
+   fetchData,
+   getFilenameFromUrl,
+   getPdfFilenameFromUrl,
++  getRGB,
+   getXfaPageViewport,
+   isDataScheme,
+   isPdfFile,
+@@ -106,6 +107,7 @@ globalThis.pdfjsLib = {
+   getDocument,
+   getFilenameFromUrl,
+   getPdfFilenameFromUrl,
++  getRGB,
+   getUuid,
+   getXfaPageViewport,
+   GlobalWorkerOptions,
+@@ -160,6 +162,7 @@ export {
+   getDocument,
+   getFilenameFromUrl,
+   getPdfFilenameFromUrl,
++  getRGB,
+   getUuid,
+   getXfaPageViewport,
+   GlobalWorkerOptions,
+diff --git a/src/shared/util.js b/src/shared/util.js
+index a91ce5c2e..001f89ac5 100644
+--- a/src/shared/util.js
++++ b/src/shared/util.js
+@@ -76,6 +76,7 @@ const AnnotationEditorType = {
+   STAMP: 13,
+   INK: 15,
+   SIGNATURE: 101,
++  COMMENT: 102,
+ };
+ 
+ const AnnotationEditorParamsType = {
+diff --git a/web/annotation_editor_layer_builder.css b/web/annotation_editor_layer_builder.css
+index 599e3ed65..40a10fff3 100644
+--- a/web/annotation_editor_layer_builder.css
++++ b/web/annotation_editor_layer_builder.css
+@@ -16,6 +16,7 @@
+ @import url(draw_layer_builder.css);
+ @import url(toggle_button.css);
+ @import url(signature_manager.css);
++@import url(comment_manager.css);
+ 
+ :root {
+   --outline-width: 2px;
+@@ -237,6 +238,7 @@
+     --editor-toolbar-delete-image: url(images/editor-toolbar-delete.svg);
+     --editor-toolbar-bg-color: light-dark(#f0f0f4, #2b2a33);
+     --editor-toolbar-highlight-image: url(images/toolbarButton-editorHighlight.svg);
++    --editor-toolbar-comment-edit-image: url(images/comment_editButton.svg);
+     --editor-toolbar-fg-color: light-dark(#2e2e56, #fbfbfe);
+     --editor-toolbar-border-color: #8f8f9d;
+     --editor-toolbar-hover-border-color: var(--editor-toolbar-border-color);
+@@ -498,6 +500,21 @@
+           }
+         }
+       }
++
++      .comment {
++        width: var(--editor-toolbar-height);
++
++        &::before {
++          content: "";
++          mask-image: var(--editor-toolbar-comment-edit-image);
++          mask-repeat: no-repeat;
++          mask-position: center;
++          display: inline-block;
++          background-color: var(--editor-toolbar-fg-color);
++          width: 100%;
++          height: 100%;
++        }
++      }
+     }
+   }
+ }
+diff --git a/web/annotation_layer_builder.css b/web/annotation_layer_builder.css
+index f2dbc375e..37246c312 100644
+--- a/web/annotation_layer_builder.css
++++ b/web/annotation_layer_builder.css
+@@ -17,6 +17,7 @@
+   color-scheme: only light;
+ 
+   --annotation-unfocused-field-background: url("data:image/svg+xml;charset=UTF-8,<svg width='1px' height='1px' xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' style='fill:rgba(0, 54, 255, 0.13);'/></svg>");
++  --comment-edit-image: url(images/comment_editButton.svg);
+   --input-focus-border-color: Highlight;
+   --input-focus-outline: 1px solid Canvas;
+   --input-unfocused-border-color: transparent;
+diff --git a/web/app.js b/web/app.js
+index 6b7f95e1d..0d86f48d6 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -71,6 +71,7 @@ import { LinkTarget, PDFLinkService } from "./pdf_link_service.js";
+ import { AltTextManager } from "web-alt_text_manager";
+ import { AnnotationEditorParams } from "web-annotation_editor_params";
+ import { CaretBrowsingMode } from "./caret_browsing.js";
++import { CommentManager } from "./comment_manager.js";
+ import { DownloadManager } from "web-download_manager";
+ import { EditorUndoBar } from "./editor_undo_bar.js";
+ import { OverlayManager } from "./overlay_manager.js";
+@@ -484,6 +485,10 @@ const PDFViewerApplication = {
+             eventBus
+           )
+         : null;
++    const commentManager =
++      AppOptions.get("enableComment") && appConfig.editCommentDialog
++        ? new CommentManager(appConfig.editCommentDialog, overlayManager)
++        : null;
+ 
+     const enableHWA = AppOptions.get("enableHWA"),
+       maxCanvasPixels = AppOptions.get("maxCanvasPixels"),
+@@ -497,6 +502,7 @@ const PDFViewerApplication = {
+       linkService,
+       downloadManager,
+       altTextManager,
++      commentManager,
+       signatureManager,
+       editorUndoBar: this.editorUndoBar,
+       findController,
+diff --git a/web/app_options.js b/web/app_options.js
+index 70f9338fa..75e78f010 100644
+--- a/web/app_options.js
++++ b/web/app_options.js
+@@ -218,6 +218,11 @@ const defaultOptions = {
+     value: true,
+     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+   },
++  enableComment: {
++    /** @type {boolean} */
++    value: true, // typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING"),
++    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
++  },
+   enableDetailCanvas: {
+     /** @type {boolean} */
+     value: true,
+diff --git a/web/comment_manager.css b/web/comment_manager.css
+new file mode 100644
+index 000000000..18eb49f4f
+--- /dev/null
++++ b/web/comment_manager.css
+@@ -0,0 +1,275 @@
++/* Copyright 2022 Mozilla Foundation
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#commentManagerDialog {
++  --comment-actions-button-icon: url(images/comment_actionsButton.svg);
++  --comment-close-button-icon: url(images/comment_closeButton.svg);
++  --comment-icon-color: black;
++
++  --default-dialog-bg-color: #ffff98;
++  --dialog-base-color: var(--default-dialog-bg-color);
++  --dialog-bg-color: color-mix(in srgb, var(--dialog-base-color), white 30%);
++  --dialog-border-color: var(--dialog-base-color);
++
++  --menuitem-bg-color: transparent;
++  --menuitem-fg-color: black;
++  --menuitem-hover-bg-color: #3383e7;
++  --menuitem-hover-fg-color: white;
++
++  --comment-text-input-bg: white;
++  --comment-text-input-fg: black;
++  --comment-text-input-border: #0060df;
++  --comment-focus-outline-color: #0060df;
++
++  --hover-filter: brightness(0.9);
++  --text-primary-color: #15141a;
++
++  --button-secondary-bg-color: #f0f0f4;
++  --button-secondary-active-bg-color: color-mix(
++    in srgb,
++    var(--button-secondary-bg-color),
++    black 14%
++  );
++  --button-secondary-hover-bg-color: color-mix(
++    in srgb,
++    var(--button-secondary-bg-color),
++    black 7%
++  );
++
++  --button-primary-bg-color: #0060df;
++  --button-primary-fg-color: #fbfbfe;
++  --button-primary-active-bg-color: #0050c0;
++  --button-primary-hover-bg-color: #0250bb;
++
++  --menu-bg-color: rgb(253 250 244);
++
++  @media screen and (forced-colors: active) {
++  }
++
++  width: 308px;
++  padding: 8px 16px 16px;
++  overflow: visible;
++  position: absolute;
++  margin: 0;
++
++  border-radius: 4px;
++  border: 1px solid var(--dialog-border-color);
++  background: var(--dialog-bg-color);
++  box-shadow: 0 2px 14px 0 rgb(58 57 68 / 0.2);
++
++  .mainContainer {
++    width: 100%;
++    height: auto;
++    display: flex;
++    flex-direction: column;
++    align-items: flex-start;
++    gap: 4px;
++
++    *:focus-visible {
++      outline: 2px solid var(--comment-focus-outline-color);
++      outline-offset: 0;
++    }
++
++    #commentManagerToolbar {
++      width: 100%;
++      display: flex;
++      justify-content: flex-end;
++      align-items: flex-start;
++      gap: 8px;
++      align-self: stretch;
++
++      cursor: move;
++
++      > button {
++        width: 16px;
++        height: 16px;
++        padding: 0;
++        background-color: transparent;
++        border: none;
++
++        cursor: pointer;
++
++        &::before {
++          content: "";
++          display: inline-block;
++          width: 100%;
++          height: 100%;
++          mask-repeat: no-repeat;
++          mask-position: center;
++          background-color: var(--comment-icon-color);
++        }
++
++        &#commentActionsButton::before {
++          mask-image: var(--comment-actions-button-icon);
++        }
++
++        &#commentCloseButton::before {
++          mask-image: var(--comment-close-button-icon);
++        }
++
++        > span {
++          display: inline-block;
++          width: 0;
++          height: 0;
++          overflow: hidden;
++        }
++      }
++
++      menu {
++        width: max-content;
++        min-width: 90px;
++        display: flex;
++        flex-direction: column;
++        align-items: center;
++        gap: 1px;
++        padding: 5px 6px;
++        cursor: auto;
++        z-index: 1;
++
++        position: absolute;
++        top: 9px;
++        right: -6px;
++
++        border-radius: 6px;
++        border: 0.5px solid #b4b4b6;
++        background-color: var(--menu-bg-color);
++        box-shadow:
++          1px -1px 0 0 #fff inset,
++          -1px 1px 0 0 #fff inset,
++          -1px -1px 0 0 #fff inset,
++          1px 1px 0 0 #fff inset,
++          0 0 15px 0 rgb(0 0 0 / 0.25);
++
++        button {
++          background-color: var(--menu-bg-color);
++          width: 100%;
++          height: 24px;
++          padding: 0;
++          box-sizing: border-box;
++          display: flex;
++          border: 2px solid transparent;
++          color: var(--menuitem-fg-color);
++
++          &:hover {
++            background-color: var(--menuitem-hover-bg-color);
++            color: var(--menuitem-hover-fg-color);
++          }
++
++          &:focus-visible {
++            outline: none;
++            border: 2px solid var(--comment-text-input-border);
++          }
++
++          &:disabled {
++            opacity: 0.5;
++            pointer-events: none;
++          }
++
++          span {
++            align-content: center;
++            width: 100%;
++            max-width: min-content;
++            padding-inline: 8px;
++            color: inherit;
++            text-align: start;
++            font: menu;
++            font-size: 15px;
++            font-weight: 400;
++            line-height: normal;
++          }
++        }
++      }
++    }
++
++    #commentManagerTextInput {
++      width: 100%;
++      min-height: 132px;
++      resize: none;
++      box-sizing: border-box;
++      margin-bottom: 12px;
++
++      border-radius: 4px;
++      border: 2px solid var(--comment-text-input-border);
++      background-color: var(--comment-text-input-bg);
++      color: var(--comment-text-input-fg);
++    }
++
++    #commentManagerTextView {
++      width: 100%;
++      height: max-content;
++      resize: none;
++      box-sizing: border-box;
++      margin-bottom: 12px;
++
++      border: none;
++      background-color: transparent;
++      color: var(--comment-text-input-fg);
++    }
++
++    .dialogButtonsGroup {
++      gap: 8px;
++
++      #commentManagerSaveButton:disabled {
++        background-color: color-mix(
++          in srgb,
++          var(--button-primary-disabled-bg-color),
++          transparent 50%
++        );
++        border-color: color-mix(
++          in srgb,
++          var(--button-primary-disabled-border-color),
++          transparent 50%
++        );
++        opacity: 1;
++      }
++    }
++  }
++}
++
++.annotationLayer {
++  --comment-inline-button-bg: #e0e0e6;
++  --comment-inline-button-fg: black;
++  --comment-inline-button-border-color: #8f8f9d;
++  --comment-button-dim: 18px;
++  --comment-button-offset: calc(var(--comment-button-dim) / 2);
++
++  .annotationCommentButton {
++    position: absolute;
++    width: 18px;
++    height: 18px;
++    background-color: var(--comment-inline-button-bg);
++    cursor: auto;
++    z-index: 1;
++    border: 1px solid var(--comment-inline-button-border-color);
++    border-radius: 4px;
++    padding: 2px;
++    margin: 0;
++    box-sizing: border-box;
++    pointer-events: auto;
++
++    &::before {
++      content: "";
++      display: inline-block;
++      width: 100%;
++      height: 100%;
++      mask-repeat: no-repeat;
++      mask-size: cover;
++      mask-image: var(--comment-edit-image);
++      background-color: var(--comment-inline-button-fg);
++      margin: 0;
++      padding: 0;
++    }
++  }
++}
+diff --git a/web/comment_manager.js b/web/comment_manager.js
+new file mode 100644
+index 000000000..78eaaabc1
+--- /dev/null
++++ b/web/comment_manager.js
+@@ -0,0 +1,370 @@
++/* Copyright 2025 Mozilla Foundation
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import { getRGB, noContextMenu, shadow, stopEvent } from "pdfjs-lib";
++
++class CommentManager {
++  #actions;
++
++  #currentEditor;
++
++  #dialog;
++
++  #deleteMenuItem;
++
++  #editMenuItem;
++
++  #overlayManager;
++
++  #previousText = "";
++
++  #commentText = "";
++
++  #menu;
++
++  #textInput;
++
++  #textView;
++
++  #saveButton;
++
++  #uiManager;
++
++  #prevDragX = Infinity;
++
++  #prevDragY = Infinity;
++
++  #dialogX = 0;
++
++  #dialogY = 0;
++
++  #menuAC = null;
++
++  constructor(
++    {
++      dialog,
++      toolbar,
++      actions,
++      menu,
++      editMenuItem,
++      deleteMenuItem,
++      closeButton,
++      textInput,
++      textView,
++      cancelButton,
++      saveButton,
++    },
++    overlayManager
++  ) {
++    this.#actions = actions;
++    this.#dialog = dialog;
++    this.#editMenuItem = editMenuItem;
++    this.#deleteMenuItem = deleteMenuItem;
++    this.#menu = menu;
++    this.#textInput = textInput;
++    this.#textView = textView;
++    this.#overlayManager = overlayManager;
++    this.#saveButton = saveButton;
++
++    const finishBound = this.#finish.bind(this);
++    dialog.addEventListener("close", finishBound);
++    dialog.addEventListener("contextmenu", e => {
++      if (e.target !== this.#textInput) {
++        e.preventDefault();
++      }
++    });
++    cancelButton.addEventListener("click", finishBound);
++    closeButton.addEventListener("click", finishBound);
++    saveButton.addEventListener("click", this.#save.bind(this));
++
++    this.#makeMenu();
++    editMenuItem.addEventListener("click", () => {
++      this.#closeMenu();
++      this.#edit();
++    });
++    deleteMenuItem.addEventListener("click", () => {
++      this.#closeMenu();
++      this.#textInput.value = "";
++      this.#currentEditor.comment = null;
++      this.#save();
++    });
++
++    textInput.addEventListener("input", () => {
++      saveButton.disabled = textInput.value === this.#previousText;
++      this.#deleteMenuItem.disabled = textInput.value === "";
++    });
++    textView.addEventListener("dblclick", () => {
++      this.#edit();
++    });
++
++    // Make the dialog draggable.
++    let pointerMoveAC;
++    const cancelDrag = () => {
++      this.#prevDragX = this.#prevDragY = Infinity;
++      this.#dialog.classList.remove("dragging");
++      pointerMoveAC?.abort();
++      pointerMoveAC = null;
++    };
++    toolbar.addEventListener("pointerdown", e => {
++      const { target, clientX, clientY } = e;
++      if (target !== toolbar) {
++        return;
++      }
++      this.#closeMenu();
++      this.#prevDragX = clientX;
++      this.#prevDragY = clientY;
++      pointerMoveAC = new AbortController();
++      const { signal } = pointerMoveAC;
++      dialog.classList.add("dragging");
++      window.addEventListener(
++        "pointermove",
++        ev => {
++          if (this.#prevDragX !== Infinity) {
++            const { clientX: x, clientY: y } = ev;
++            this.#setPosition(
++              this.#dialogX + x - this.#prevDragX,
++              this.#dialogY + y - this.#prevDragY
++            );
++            this.#prevDragX = x;
++            this.#prevDragY = y;
++            stopEvent(ev);
++          }
++        },
++        { signal }
++      );
++      window.addEventListener("blur", cancelDrag, { signal });
++      stopEvent(e);
++    });
++    dialog.addEventListener("pointerup", e => {
++      if (this.#prevDragX === Infinity) {
++        return; // Not dragging.
++      }
++      cancelDrag();
++      stopEvent(e);
++    });
++
++    overlayManager.register(dialog);
++  }
++
++  #closeMenu() {
++    if (!this.#menuAC) {
++      return;
++    }
++    this.#menu.classList.toggle("hidden", true);
++    this.#menuAC.abort();
++    this.#menuAC = null;
++    if (this.#menu.contains(document.activeElement)) {
++      // If the menu is closed while focused, focus the actions button.
++      setTimeout(() => {
++        if (!this.#dialog.contains(document.activeElement)) {
++          this.#actions.focus();
++        }
++      }, 0);
++    }
++  }
++
++  #makeMenu() {
++    this.#actions.addEventListener("click", e => {
++      const closeMenu = this.#closeMenu.bind(this);
++      if (this.#menuAC) {
++        closeMenu();
++        return;
++      }
++
++      const menu = this.#menu;
++      menu.classList.toggle("hidden", false);
++      this.#menuAC = new AbortController();
++      const { signal } = this.#menuAC;
++      window.addEventListener(
++        "pointerdown",
++        ({ target }) => {
++          if (target !== this.#actions && !menu.contains(target)) {
++            closeMenu();
++          }
++        },
++        { signal }
++      );
++      window.addEventListener("blur", closeMenu, { signal });
++      this.#actions.addEventListener(
++        "keydown",
++        ({ key }) => {
++          switch (key) {
++            case "ArrowDown":
++            case "Home":
++              menu.firstElementChild.focus();
++              stopEvent(e);
++              break;
++            case "ArrowUp":
++            case "End":
++              menu.lastElementChild.focus();
++              stopEvent(e);
++              break;
++            case "Escape":
++              closeMenu();
++              stopEvent(e);
++          }
++        },
++        { signal }
++      );
++    });
++
++    const keyboardListener = e => {
++      const { key, target } = e;
++      const menu = this.#menu;
++      switch (key) {
++        case "Escape":
++          this.#closeMenu();
++          stopEvent(e);
++          break;
++        case "ArrowDown":
++        case "Tab":
++          (target.nextElementSibling || menu.firstElementChild).focus();
++          stopEvent(e);
++          break;
++        case "ArrowUp":
++        case "ShiftTab":
++          (target.previousElementSibling || menu.lastElementChild).focus();
++          stopEvent(e);
++          break;
++        case "Home":
++          menu.firstElementChild.focus();
++          stopEvent(e);
++          break;
++        case "End":
++          menu.lastElementChild.focus();
++          stopEvent(e);
++          break;
++      }
++    };
++    for (const menuItem of this.#menu.children) {
++      if (menuItem.classList.contains("hidden")) {
++        continue; // Skip hidden menu items.
++      }
++      menuItem.addEventListener("keydown", keyboardListener);
++      menuItem.addEventListener("contextmenu", noContextMenu);
++    }
++    this.#menu.addEventListener("contextmenu", noContextMenu);
++  }
++
++  async open(uiManager, editor, position) {
++    if (editor) {
++      this.#uiManager = uiManager;
++      this.#currentEditor = editor;
++    }
++    const {
++      comment: { text, color },
++    } = editor;
++    this.#dialog.style.setProperty(
++      "--dialog-base-color",
++      this.#lightenColor(color) || "var(--default-dialog-bg-color)"
++    );
++    this.#commentText = text || "";
++    if (!text) {
++      this.#edit();
++    } else {
++      this.#setText(text);
++      this.#textInput.classList.toggle("hidden", true);
++      this.#textView.classList.toggle("hidden", false);
++      this.#editMenuItem.disabled = this.#deleteMenuItem.disabled = false;
++    }
++    this.#uiManager.removeEditListeners();
++    this.#saveButton.disabled = true;
++
++    const x =
++      position.right !== undefined
++        ? position.right - this._dialogWidth
++        : position.left;
++    const y = position.top;
++    this.#setPosition(x, y);
++
++    await this.#overlayManager.open(this.#dialog);
++  }
++
++  async #save() {
++    this.#currentEditor.comment = this.#textInput.value;
++    this.#finish();
++  }
++
++  get _dialogWidth() {
++    const dialog = this.#dialog;
++    const { style } = dialog;
++    style.opacity = "0";
++    style.display = "block";
++    const width = dialog.getBoundingClientRect().width;
++    style.opacity = style.display = "";
++    return shadow(this, "_dialogWidth", width);
++  }
++
++  #lightenColor(color) {
++    if (!color) {
++      return null; // No color provided.
++    }
++    const [r, g, b] = getRGB(color);
++    const gray = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
++    const ratio = gray < 0.9 ? Math.round((0.9 - gray) * 100) : 0;
++    return `color-mix(in srgb, ${ratio}% white, ${color})`;
++  }
++
++  #setText(text) {
++    const textView = this.#textView;
++    for (const line of text.split("\n")) {
++      const span = document.createElement("span");
++      span.textContent = line;
++      textView.append(span, document.createElement("br"));
++    }
++  }
++
++  #setPosition(x, y) {
++    this.#dialogX = x;
++    this.#dialogY = y;
++    const { style } = this.#dialog;
++    style.left = `${x}px`;
++    style.top = `${y}px`;
++  }
++
++  #edit() {
++    const textInput = this.#textInput;
++    const textView = this.#textView;
++    if (textView.childElementCount > 0) {
++      const height = parseFloat(getComputedStyle(textView).height);
++      textInput.value = this.#previousText = this.#commentText;
++      textInput.style.height = `${height + 20}px`;
++    } else {
++      textInput.value = this.#previousText = this.#commentText;
++    }
++
++    textInput.classList.toggle("hidden", false);
++    textView.classList.toggle("hidden", true);
++    this.#editMenuItem.disabled = this.#deleteMenuItem.disabled = true;
++    setTimeout(() => textInput.focus(), 0);
++  }
++
++  #finish() {
++    this.#textView.replaceChildren();
++    this.#textInput.value = this.#previousText = this.#commentText = "";
++    this.#overlayManager.closeIfActive(this.#dialog);
++    this.#textInput.style.height = "";
++    this.#uiManager?.addEditListeners();
++    this.#uiManager = null;
++    this.#currentEditor = null;
++  }
++
++  destroy() {
++    this.#uiManager = null;
++    this.#finish();
++  }
++}
++
++export { CommentManager };
+diff --git a/web/images/comment_actionsButton.svg b/web/images/comment_actionsButton.svg
+new file mode 100644
+index 000000000..3161438ca
+--- /dev/null
++++ b/web/images/comment_actionsButton.svg
+@@ -0,0 +1,3 @@
++<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill-rule="evenodd" clip-rule="evenodd" d="M7.51562 11H6.01562L5.51562 11.5V13L6.01562 13.5H7.51562L8.01562 13V11.5L7.51562 11ZM13.2656 11H11.7656L11.2656 11.5V13L11.7656 13.5H13.2656L13.7656 13V11.5L13.2656 11ZM17.5156 11H19.0156L19.5156 11.5V13L19.0156 13.5H17.5156L17.0156 13V11.5L17.5156 11Z" fill="black"/>
++</svg>
+diff --git a/web/images/comment_closeButton.svg b/web/images/comment_closeButton.svg
+new file mode 100644
+index 000000000..6fb5f6a2c
+--- /dev/null
++++ b/web/images/comment_closeButton.svg
+@@ -0,0 +1,3 @@
++<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path d="M13.6241 11.7759L18.3331 7.06694C18.4423 6.94811 18.5015 6.79167 18.4981 6.63028C18.4948 6.46889 18.4292 6.31502 18.3152 6.20081C18.2011 6.0866 18.0473 6.02088 17.8859 6.01736C17.7245 6.01384 17.568 6.0728 17.4491 6.18194L12.7601 10.8709H12.2721L7.58306 6.18294C7.52495 6.12489 7.45598 6.07886 7.38008 6.04747C7.30418 6.01609 7.22284 5.99995 7.14071 6C7.05857 6.00005 6.97725 6.01627 6.90139 6.04774C6.82553 6.07922 6.75661 6.12533 6.69856 6.18344C6.64052 6.24155 6.59449 6.31052 6.5631 6.38642C6.53171 6.46232 6.51558 6.54366 6.51563 6.62579C6.51572 6.79167 6.5817 6.95071 6.69906 7.06794L11.3861 11.7539V12.2449L6.69906 16.9319C6.5898 17.0508 6.53066 17.2072 6.53399 17.3686C6.53732 17.53 6.60288 17.6839 6.71696 17.7981C6.83104 17.9123 6.98483 17.978 7.14622 17.9815C7.3076 17.985 7.46411 17.9261 7.58306 17.8169L12.2701 13.1299H12.7611L17.4481 17.8169C17.5656 17.934 17.7247 17.9997 17.8906 17.9997C18.0564 17.9997 18.2155 17.934 18.3331 17.8169C18.4504 17.6996 18.5163 17.5404 18.5163 17.3744C18.5163 17.2085 18.4504 17.0493 18.3331 16.9319L13.6241 12.2229V11.7759Z" fill="black"/>
++</svg>
+diff --git a/web/images/comment_editButton.svg b/web/images/comment_editButton.svg
+new file mode 100644
+index 000000000..fdd8f6d4e
+--- /dev/null
++++ b/web/images/comment_editButton.svg
+@@ -0,0 +1,3 @@
++<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill-rule="evenodd" clip-rule="evenodd" d="M13.4686 2.68492L12.9276 2.14392H2.40626L1.86526 2.68492V10.1102L2.40626 10.6512H6.71147C6.92794 10.6511 7.14165 10.7265 7.31497 10.8571L10.4357 13.3978V11.2299C10.4357 11.1049 10.485 10.9851 10.5795 10.8906C10.674 10.7961 10.7938 10.7468 10.9188 10.7468H12.9276L13.4686 10.2058V2.68492ZM2.52747 0.805556H12.7181C13.2412 0.805556 13.7478 1.01961 14.1371 1.40889C14.5264 1.79817 14.7405 2.30481 14.7405 2.82792V9.82792C14.7405 10.351 14.5264 10.8577 14.1371 11.247C13.7478 11.6363 13.2412 11.8503 12.7181 11.8503H11.4686V14.2055H10.4357L6.62747 11.8503H2.52747C2.00436 11.8503 1.49772 11.6363 1.10844 11.247C0.719162 10.8577 0.505107 10.351 0.505107 9.82792V2.82792C0.505107 2.30481 0.719162 1.79817 1.10844 1.40889C1.49772 1.01961 2.00436 0.805556 2.52747 0.805556ZM10.824 5.12016H4.46259C4.30418 5.12016 4.15436 5.05707 4.04541 4.94812C3.93646 4.83917 3.87337 4.68935 3.87337 4.53094C3.87337 4.37253 3.93646 4.22271 4.04541 4.11376C4.15436 4.00481 4.30418 3.94172 4.46259 3.94172H10.824C10.9824 3.94172 11.1322 4.00481 11.2412 4.11376C11.3501 4.22271 11.4132 4.37253 11.4132 4.53094C11.4132 4.68935 11.3501 4.83917 11.2412 4.94812C11.1322 5.05707 10.9824 5.12016 10.824 5.12016ZM8.82403 8.16137H4.46259C4.30418 8.16137 4.15436 8.09828 4.04541 7.98933C3.93646 7.88038 3.87337 7.73056 3.87337 7.57215C3.87337 7.41374 3.93646 7.26392 4.04541 7.15497C4.15436 7.04602 4.30418 6.98293 4.46259 6.98293H8.82403C8.98244 6.98293 9.13226 7.04602 9.24121 7.15497C9.35016 7.26392 9.41325 7.41374 9.41325 7.57215C9.41325 7.73056 9.35016 7.88038 9.24121 7.98933C9.13226 8.09828 8.98244 8.16137 8.82403 8.16137Z" fill="black"/>
++</svg>
+diff --git a/web/pdf_viewer.js b/web/pdf_viewer.js
+index 3d1ed09a1..89d5f28c8 100644
+--- a/web/pdf_viewer.js
++++ b/web/pdf_viewer.js
+@@ -230,6 +230,8 @@ class PDFViewer {
+ 
+   #annotationMode = AnnotationMode.ENABLE_FORMS;
+ 
++  #commentManager = null;
++
+   #containerTopLeft = null;
+ 
+   #editorUndoBar = null;
+@@ -311,6 +313,7 @@ class PDFViewer {
+     this.downloadManager = options.downloadManager || null;
+     this.findController = options.findController || null;
+     this.#altTextManager = options.altTextManager || null;
++    this.#commentManager = options.commentManager || null;
+     this.#signatureManager = options.signatureManager || null;
+     this.#editorUndoBar = options.editorUndoBar || null;
+ 
+@@ -928,6 +931,7 @@ class PDFViewer {
+               this.container,
+               viewer,
+               this.#altTextManager,
++              this.#commentManager,
+               this.#signatureManager,
+               eventBus,
+               pdfDocument,
+@@ -2395,6 +2399,8 @@ class PDFViewer {
+    * @typedef {Object} AnnotationEditorModeOptions
+    * @property {number} mode - The editor mode (none, FreeText, ink, ...).
+    * @property {string|null} [editId] - ID of the existing annotation to edit.
++   * @property {boolean|undefined} [editComment] - Must edit the associated
++   *   comment of the annotation.
+    * @property {boolean} [isFromKeyboard] - True if the mode change is due to a
+    *   keyboard action.
+    */
+@@ -2402,7 +2408,12 @@ class PDFViewer {
+   /**
+    * @param {AnnotationEditorModeOptions} options
+    */
+-  set annotationEditorMode({ mode, editId = null, isFromKeyboard = false }) {
++  set annotationEditorMode({
++    mode,
++    editId = null,
++    isFromKeyboard = false,
++    editComment = false,
++  }) {
+     if (!this.#annotationEditorUIManager) {
+       throw new Error(`The AnnotationEditor is not enabled.`);
+     }
+@@ -2424,7 +2435,8 @@ class PDFViewer {
+       await this.#annotationEditorUIManager.updateMode(
+         mode,
+         editId,
+-        isFromKeyboard
++        isFromKeyboard,
++        editComment
+       );
+       if (
+         mode !== this.#annotationEditorMode ||
+diff --git a/web/pdfjs.js b/web/pdfjs.js
+index 7634d2c14..4898002fe 100644
+--- a/web/pdfjs.js
++++ b/web/pdfjs.js
+@@ -32,6 +32,7 @@ const {
+   getDocument,
+   getFilenameFromUrl,
+   getPdfFilenameFromUrl,
++  getRGB,
+   getUuid,
+   getXfaPageViewport,
+   GlobalWorkerOptions,
+@@ -86,6 +87,7 @@ export {
+   getDocument,
+   getFilenameFromUrl,
+   getPdfFilenameFromUrl,
++  getRGB,
+   getUuid,
+   getXfaPageViewport,
+   GlobalWorkerOptions,
+diff --git a/web/viewer.html b/web/viewer.html
+index 7805b0f1d..670a95889 100644
+--- a/web/viewer.html
++++ b/web/viewer.html
+@@ -770,6 +770,37 @@ See https://github.com/adobe-type-tools/cmap-resources
+         </div>
+       </dialog>
+ 
++      <dialog class="dialog commentManager" id="commentManagerDialog">
++        <div class="mainContainer">
++          <div id="commentManagerToolbar">
++            <button id="commentActionsButton" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="commentActionsMenu" tabindex="0" data-l10n-id="pdfjs-editor-comment-actions-button">
++              <span data-l10n-id="pdfjs-editor-comment-actions-button-label"></span>
++            </button>
++            <menu class="hidden" id="commentActionsMenu">
++              <button id="commentActionsEditButton" type="button" tabindex="0">
++                <span data-l10n-id="pdfjs-editor-comment-actions-edit-button-label"></span>
++              </button>
++              <button id="commentActionsDeleteButton" type="button" tabindex="0">
++                <span data-l10n-id="pdfjs-editor-comment-actions-delete-button-label"></span>
++              </button>
++            </menu>
++            <button id="commentCloseButton" type="button" tabindex="0" data-l10n-id="pdfjs-editor-comment-close-button">
++              <span data-l10n-id="pdfjs-editor-comment-close-button-label"></span>
++            </button>
++          </div>
++          <textarea class="hidden" id="commentManagerTextInput" data-l10n-id="pdfjs-editor-comment-manager-text-input"></textarea>
++          <div class="hidden" id="commentManagerTextView"></div>
++          <div class="dialogButtonsGroup">
++            <button id="commentManagerCancelButton" type="button" class="secondaryButton" tabindex="0">
++              <span data-l10n-id="pdfjs-editor-edit-comment-manager-cancel-button"></span>
++            </button>
++            <button id="commentManagerSaveButton" type="button" class="primaryButton" disabled tabindex="0">
++              <span data-l10n-id="pdfjs-editor-edit-comment-manager-save-button"></span>
++            </button>
++          </div>
++        </div>
++      </dialog>
++
+ <!--#if !MOZCENTRAL-->
+         <dialog id="printServiceDialog" style="min-width: 200px;">
+           <div class="row">
+diff --git a/web/viewer.js b/web/viewer.js
+index 7d654b85d..bf9bc1e2b 100644
+--- a/web/viewer.js
++++ b/web/viewer.js
+@@ -259,6 +259,19 @@ function getViewerConfiguration() {
+       undoButton: document.getElementById("editorUndoBarUndoButton"),
+       closeButton: document.getElementById("editorUndoBarCloseButton"),
+     },
++    editCommentDialog: {
++      dialog: document.getElementById("commentManagerDialog"),
++      toolbar: document.getElementById("commentManagerToolbar"),
++      actions: document.getElementById("commentActionsButton"),
++      menu: document.getElementById("commentActionsMenu"),
++      editMenuItem: document.getElementById("commentActionsEditButton"),
++      deleteMenuItem: document.getElementById("commentActionsDeleteButton"),
++      closeButton: document.getElementById("commentCloseButton"),
++      textInput: document.getElementById("commentManagerTextInput"),
++      textView: document.getElementById("commentManagerTextView"),
++      cancelButton: document.getElementById("commentManagerCancelButton"),
++      saveButton: document.getElementById("commentManagerSaveButton"),
++    },
+   };
+ }
+ 
+-- 
+2.25.1
+
