@@ -197,22 +197,65 @@ class AnnotationElement {
     return AnnotationElement._hasPopupData(this.data);
   }
 
+  get hasCommentButton() {
+    return this._isEditable && this.hasPopupElement;
+  }
+
+  get commentButtonPosition() {
+    const { quadPoints, rect } = this.data;
+    if (quadPoints?.length >= 2) {
+      return quadPoints.slice(0, 2);
+    }
+    if (rect) {
+      return [rect[0], rect[3]];
+    }
+    return null;
+  }
+
+  normalizePoint(point) {
+    const {
+      page: { view },
+      viewport: {
+        rawDims: { pageWidth, pageHeight, pageX, pageY },
+      },
+    } = this.parent;
+    point[1] = view[3] - point[1] + view[1];
+    point[0] = (100 * (point[0] - pageX)) / pageWidth;
+    point[1] = (100 * (point[1] - pageY)) / pageHeight;
+    return point;
+  }
+
   updateEdited(params) {
     if (!this.container) {
       return;
     }
 
-    this.#updates ||= {
-      rect: this.data.rect.slice(0),
-    };
+    if (params.rect) {
+      this.#updates ||= {
+        rect: this.data.rect.slice(0),
+      };
+    }
 
-    const { rect } = params;
+    const { rect, popup: newPopup } = params;
 
     if (rect) {
       this.#setRectEdited(rect);
     }
 
-    this.#popupElement?.popup.updateEdited(params);
+    let popup = this.#popupElement?.popup || this.popup;
+    if (!popup && newPopup.text) {
+      this._createPopup(newPopup);
+      popup = this.#popupElement;
+    }
+    if (!popup) {
+      return;
+    }
+    popup.updateEdited(params);
+    if (newPopup.deleted) {
+      popup.remove();
+      this.#popupElement = null;
+      this.popup = null;
+    }
   }
 
   resetEdited() {
@@ -271,7 +314,9 @@ class AnnotationElement {
     // But if an annotation is above an other one, then we must draw it
     // after the other one whatever the order is in the DOM, hence the
     // use of the z-index.
-    style.zIndex = this.parent.zIndex++;
+    style.zIndex = this.parent.zIndex;
+    // Keep zIndex + 1 for stuff we want tot add on top of this annotation.
+    this.parent.zIndex += 2;
 
     if (data.alternativeText) {
       container.title = data.alternativeText;
@@ -601,15 +646,25 @@ class AnnotationElement {
    * @private
    * @memberof AnnotationElement
    */
-  _createPopup() {
+  _createPopup(popupData = null) {
     const { data } = this;
 
+    let contentsObj, modificationDate;
+    if (popupData) {
+      contentsObj = {
+        str: popupData.text,
+      };
+      modificationDate = popupData.date;
+    } else {
+      contentsObj = data.contentsObj;
+      modificationDate = data.modificationDate;
+    }
     const popup = (this.#popupElement = new PopupAnnotationElement({
       data: {
         color: data.color,
         titleObj: data.titleObj,
-        modificationDate: data.modificationDate,
-        contentsObj: data.contentsObj,
+        modificationDate,
+        contentsObj,
         richText: data.richText,
         parentRect: data.rect,
         borderStyle: 0,
@@ -617,10 +672,15 @@ class AnnotationElement {
         rotation: data.rotation,
         noRotate: true,
       },
+      linkService: this.linkService,
       parent: this.parent,
       elements: [this],
     }));
     this.parent.div.append(popup.render());
+  }
+
+  get hasPopupElement() {
+    return !!(this.#popupElement || this.popup || this.data.popupRef);
   }
 
   /**
@@ -2079,6 +2139,7 @@ class PopupAnnotationElement extends AnnotationElement {
       parent: this.parent,
       elements: this.elements,
       open: this.data.open,
+      eventBus: this.linkService.eventBus,
     }));
 
     const elementIds = [];
@@ -2127,6 +2188,10 @@ class PopupElement {
 
   #position = null;
 
+  #commentButton = null;
+
+  #commentButtonPosition = null;
+
   #rect = null;
 
   #richText = null;
@@ -2136,6 +2201,10 @@ class PopupElement {
   #updates = null;
 
   #wasVisible = false;
+
+  #popupAbortController = null;
+
+  #eventBus = null;
 
   constructor({
     container,
@@ -2149,6 +2218,7 @@ class PopupElement {
     rect,
     parentRect,
     open,
+    eventBus = null,
   }) {
     this.#container = container;
     this.#titleObj = titleObj;
@@ -2159,25 +2229,32 @@ class PopupElement {
     this.#rect = rect;
     this.#parentRect = parentRect;
     this.#elements = elements;
+    this.#eventBus = eventBus;
 
     // The modification date is shown in the popup instead of the creation
     // date if it is available and can be parsed correctly, which is
     // consistent with other viewers such as Adobe Acrobat.
     this.#dateObj = PDFDateString.toDateObject(modificationDate);
 
+    this.#popupAbortController = new AbortController();
+    const { signal } = this.#popupAbortController;
     this.trigger = elements.flatMap(e => e.getElementsToTriggerPopup());
     // Attach the event listeners to the trigger element.
     for (const element of this.trigger) {
-      element.addEventListener("click", this.#boundToggle);
-      element.addEventListener("mouseenter", this.#boundShow);
-      element.addEventListener("mouseleave", this.#boundHide);
+      element.addEventListener("click", this.#boundToggle, { signal });
+      element.addEventListener("mouseenter", this.#boundShow, { signal });
+      element.addEventListener("mouseleave", this.#boundHide, { signal });
       element.classList.add("popupTriggerArea");
     }
 
     // Attach the event listener to toggle the popup with the keyboard.
     for (const element of elements) {
-      element.container?.addEventListener("keydown", this.#boundKeyDown);
+      element.container?.addEventListener("keydown", this.#boundKeyDown, {
+        signal,
+      });
     }
+
+    this.#renderCommentButton();
 
     this.#container.hidden = true;
     if (open) {
@@ -2193,6 +2270,62 @@ class PopupElement {
         }
       });
     }
+  }
+
+  #setCommentButtonPosition() {
+    const element = this.#elements.find(e => e.hasCommentButton);
+    if (!element) {
+      return;
+    }
+    this.#commentButtonPosition = element.normalizePoint(
+      element.commentButtonPosition
+    );
+  }
+
+  #renderCommentButton() {
+    if (this.#commentButton) {
+      return;
+    }
+
+    if (!this.#commentButtonPosition) {
+      this.#setCommentButtonPosition();
+    }
+
+    if (!this.#commentButtonPosition) {
+      return;
+    }
+
+    const button = (this.#commentButton = document.createElement("button"));
+    button.className = "annotationCommentButton";
+    const parentContainer = this.#elements[0].container;
+    button.style.zIndex = parentContainer.style.zIndex + 1;
+    button.tabIndex = 0;
+
+    const { signal } = this.#popupAbortController;
+    button.addEventListener("hover", this.#boundToggle, { signal });
+    button.addEventListener("keydown", this.#boundKeyDown, { signal });
+    button.addEventListener(
+      "click",
+      () => {
+        const [
+          {
+            data: { id: editId },
+            annotationEditorType: mode,
+          },
+        ] = this.#elements;
+        this.#eventBus?.dispatch("switchannotationeditormode", {
+          source: this,
+          editId,
+          mode,
+          editComment: true,
+        });
+      },
+      { signal }
+    );
+    const { style } = button;
+    style.left = `calc(${this.#commentButtonPosition[0]}% - var(--comment-button-offset))`;
+    style.top = `calc(${this.#commentButtonPosition[1]}% - var(--comment-button-offset))`;
+    parentContainer.after(button);
   }
 
   render() {
@@ -2338,7 +2471,7 @@ class PopupElement {
     }
   }
 
-  updateEdited({ rect, popupContent }) {
+  updateEdited({ rect, popup }) {
     this.#updates ||= {
       contentsObj: this.#contentsObj,
       richText: this.#richText,
@@ -2346,8 +2479,9 @@ class PopupElement {
     if (rect) {
       this.#position = null;
     }
-    if (popupContent) {
-      this.#richText = this.#makePopupContent(popupContent);
+    if (popup) {
+      this.#richText = this.#makePopupContent(popup.text);
+      this.#dateObj = PDFDateString.toDateObject(popup.date);
       this.#contentsObj = null;
     }
     this.#popup?.remove();
@@ -2364,6 +2498,16 @@ class PopupElement {
     this.#popup?.remove();
     this.#popup = null;
     this.#position = null;
+  }
+
+  remove() {
+    this.#popupAbortController.abort();
+    this.#popupAbortController = null;
+    this.#popup?.remove();
+    this.#popup = null;
+    for (const element of this.trigger) {
+      element.classList.remove("popupTriggerArea");
+    }
   }
 
   #setPosition() {
@@ -2828,6 +2972,27 @@ class InkAnnotationElement extends AnnotationElement {
           height: rect[3] - rect[1],
         };
     }
+this  }
+
+  get commentButtonPosition() {
+    const { inkLists, rect } = this.data;
+    if (inkLists?.length >= 1) {
+      let x = Infinity;
+      let y = -Infinity;
+      for (const inkList of inkLists) {
+        for (let i = 0, ii = inkList.length; i < ii; i += 2) {
+          x = Math.min(x, inkList[i]);
+          y = Math.max(y, inkList[i + 1]);
+        }
+      }
+      if (x !== Infinity) {
+        return [x, y];
+      }
+    }
+    if (rect) {
+      return [rect[0], rect[3]];
+    }
+    return null;
   }
 
   render() {
