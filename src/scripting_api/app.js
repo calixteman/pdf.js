@@ -77,6 +77,10 @@ class App extends PDFObject {
     this._eventDispatcher.dispatch(pdfEvent);
   }
 
+  _formatField(id) {
+    this._eventDispatcher.format(this._objects[id]);
+  }
+
   _registerTimeoutCallback(cExpr) {
     const id = this._timeoutCallbackId++;
     this._timeoutCallbackIds.set(id, cExpr);

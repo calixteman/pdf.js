@@ -1350,10 +1350,12 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
         element.addEventListener("updatefromsandbox", jsEvent => {
           this.showElementAndHideCanvas(jsEvent.target);
           const actions = {
-            value(event) {
-              elementData.userValue = event.detail.value ?? "";
+            value({ target, detail: { value } }) {
+              elementData.userValue = value ?? "";
               storage.setValue(id, { value: elementData.userValue.toString() });
-              event.target.value = elementData.userValue;
+              if (target === document.activeElement) {
+                target.value = elementData.userValue;
+              }
             },
             formattedValue(event) {
               const { formattedValue } = event.detail;

@@ -56,7 +56,7 @@ async function typeAndWaitForSandbox(page, selector, value) {
   }
 }
 
-describe("Interaction", () => {
+fdescribe("Interaction", () => {
   async function actAndWaitForInput(page, selector, action, clear = true) {
     await page.waitForSelector(selector, {
       timeout: 0,
@@ -1504,7 +1504,7 @@ describe("Interaction", () => {
           await page.waitForFunction(`${getQuerySelector("26R")}.value !== ""`);
 
           const value = await page.$eval(getSelector("26R"), el => el.value);
-          expect(value).withContext(`In ${browserName}`).toEqual("579");
+          expect(value).withContext(`In ${browserName}`).toEqual("579,00");
         })
       );
     });

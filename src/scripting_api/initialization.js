@@ -95,6 +95,7 @@ function initSandbox(params) {
       obj.doc = _document;
       obj.fieldPath = name;
       obj.appObjects = appObjects;
+      obj.app = app;
 
       const otherFields = annotations.slice(1);
 

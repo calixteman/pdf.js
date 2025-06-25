@@ -89,9 +89,13 @@ class Field extends PDFObject {
 
     this._globalEval = data.globalEval;
     this._appObjects = data.appObjects;
+    this._app = data.app;
+    this._lockValue = false;
 
     // The value is set depending on the field type.
+    this._isInitializingValue = true;
     this.value = data.value || "";
+    this._isInitializingValue = false;
   }
 
   get currentValueIndices() {
@@ -241,6 +245,11 @@ class Field extends PDFObject {
   }
 
   set value(value) {
+    dump({ value, id: this._id, lock: this._lockValue, init: this._isInitializingValue });
+    if (this._lockValue) {
+      return;
+    }
+
     if (this._isChoice) {
       this._setChoiceValue(value);
       return;
@@ -254,12 +263,17 @@ class Field extends PDFObject {
     ) {
       this._originalValue = undefined;
       this._value = value;
+    } else {
+      this._originalValue = value;
+      const _value = value.trim().replace(",", ".");
+      this._value = !isNaN(_value) ? parseFloat(_value) : value;
+    }
+
+    if (this._isInitializingValue) {
       return;
     }
 
-    this._originalValue = value;
-    const _value = value.trim().replace(",", ".");
-    this._value = !isNaN(_value) ? parseFloat(_value) : value;
+    this._app._formatField(this._id);
   }
 
   _getValue() {

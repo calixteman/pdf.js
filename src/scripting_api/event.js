@@ -112,6 +112,7 @@ class EventDispatcher {
           // without changing the value of the fields.
           // Acrobat does the same thing.
           this.formatAll();
+          return;
         }
         if (
           !["DidPrint", "DidSave", "WillPrint", "WillSave"].includes(eventName)
@@ -232,7 +233,7 @@ class EventDispatcher {
         id: source.obj._id,
         siblings: source.obj._siblings,
         value: "",
-        formattedValue: null,
+        formattedValue: "",
         selRange: [0, 0],
       });
     }
@@ -247,34 +248,45 @@ class EventDispatcher {
     }
   }
 
+  format(source) {
+    if (!source.obj._send) {
+      return;
+    }
+    // Run format actions if any for the given field.
+    const savedEvent = globalThis.event;
+    const event = (globalThis.event = new Event({}));
+    const savedValue = (event.value = source.obj._getValue());
+
+    source.obj._lockValue = true; // Prevent infinite recursion.
+    try {
+      this.runActions(source, source, event, "Format");
+      let formattedValue = event.value;
+      if (formattedValue === null || formattedValue === undefined) {
+        formattedValue = savedValue;
+      }
+      source.obj._send({
+        id: source.obj._id,
+        siblings: source.obj._siblings,
+        formattedValue: formattedValue?.toString?.(),
+      });
+    } finally {
+      source.obj._lockValue = false; // Unlock the value.
+      globalThis.event = savedEvent; // Restore the previous event.
+    }
+  }
+
   runValidation(source, event) {
     const didValidateRun = this.runActions(source, source, event, "Validate");
     if (event.rc) {
       source.obj.value = event.value;
-
       this.runCalculate(source, event);
-
-      const savedValue = (event.value = source.obj._getValue());
-      let formattedValue = null;
-
-      if (this.runActions(source, source, event, "Format")) {
-        formattedValue = event.value?.toString?.();
-      }
-
-      source.obj._send({
-        id: source.obj._id,
-        siblings: source.obj._siblings,
-        value: savedValue,
-        formattedValue,
-      });
-      event.value = savedValue;
     } else if (didValidateRun) {
       // The value is not valid.
       source.obj._send({
         id: source.obj._id,
         siblings: source.obj._siblings,
         value: "",
-        formattedValue: null,
+        formattedValue: "",
         selRange: [0, 0],
         focus: true, // Stay in the field.
       });
@@ -338,7 +350,7 @@ class EventDispatcher {
 
       event.value = null;
       const target = this._objects[targetId];
-      let savedValue = target.obj._getValue();
+      const savedValue = target.obj._getValue();
       this.runActions(source, target, event, "Calculate");
 
       if (!event.rc) {
@@ -360,21 +372,10 @@ class EventDispatcher {
         continue;
       }
 
-      if (event.value === null) {
-        event.value = target.obj._getValue();
-      }
-
-      savedValue = target.obj._getValue();
-      let formattedValue = null;
-      if (this.runActions(target, target, event, "Format")) {
-        formattedValue = event.value?.toString?.();
-      }
-
       target.obj._send({
         id: target.obj._id,
         siblings: target.obj._siblings,
-        value: savedValue,
-        formattedValue,
+        value: target.obj._getValue(),
       });
     }
   }
