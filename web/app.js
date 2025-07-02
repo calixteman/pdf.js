@@ -2095,6 +2095,15 @@ const PDFViewerApplication = {
         opts
       );
     }
+
+    eventBus._on(
+      "pagerender",
+      () => {
+        const { principalContainer } = this.appConfig;
+        principalContainer.ariaHidden = false;
+      },
+      { once: true }
+    );
   },
 
   bindWindowEvents() {
