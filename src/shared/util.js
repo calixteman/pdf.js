@@ -75,6 +75,7 @@ const AnnotationEditorType = {
   HIGHLIGHT: 9,
   STAMP: 13,
   INK: 15,
+  ERASER: 20,
   SIGNATURE: 101,
   COMMENT: 102,
 };
@@ -88,6 +89,7 @@ const AnnotationEditorParamsType = {
   INK_COLOR: 21,
   INK_THICKNESS: 22,
   INK_OPACITY: 23,
+  ERASER_THICKNESS: 25,
   HIGHLIGHT_COLOR: 31,
   HIGHLIGHT_THICKNESS: 32,
   HIGHLIGHT_FREE: 33,
