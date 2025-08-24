@@ -511,6 +511,7 @@ class AnnotationEditor {
     unreachable("Not implemented");
   }
 
+  /** call once the erasing operation is done */
   endErase() {
     unreachable("Not implemented");
   }
