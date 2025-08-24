@@ -5,7 +5,7 @@ import {
 import { noContextMenu, stopEvent } from "../display_utils.js";
 import { AnnotationEditor } from "./editor.js";
 import { CurrentPointer } from "./tools.js";
-import { InkEditor } from "./ink.js";
+
 
 class EraserEditor extends AnnotationEditor {
   static #currentCursorAC = null;
@@ -15,6 +15,8 @@ class EraserEditor extends AnnotationEditor {
   #erasableEditors = [];
 
   static _defaultThickness = 20;
+
+  static _thickness;
 
   static _type = "eraser";
 
@@ -26,7 +28,7 @@ class EraserEditor extends AnnotationEditor {
 
   constructor(params) {
     super({ ...params, name: "eraserEditor" });
-    this.thickness = params.thickness || EraserEditor._defaultThickness;
+    this.thickness = EraserEditor._thickness || EraserEditor._defaultThickness;
     this.defaultL10nId = "pdfjs-editor-eraser-editor";
   }
 
@@ -74,6 +76,7 @@ class EraserEditor extends AnnotationEditor {
   updateThickness(thickness) {
     const setThickness = th => {
       this.thickness = th;
+      EraserEditor._thickness = thickness;
       if (this.#cursor) {
         this.#cursor.style.width = `${this.thickness}px`;
         this.#cursor.style.height = `${this.thickness}px`;
@@ -183,7 +186,6 @@ class EraserEditor extends AnnotationEditor {
       EraserEditor.#currentCursorAC.abort();
       EraserEditor.#currentCursorAC = null;
     }
-    CurrentPointer.clearPointerType();
 
     if (this.#cursor) {
       this.#cursor.remove();
