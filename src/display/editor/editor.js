@@ -23,17 +23,12 @@ import {
   KeyboardManager,
 } from "./tools.js";
 import {
-  applyOpacity,
-  changeLightness,
-  noContextMenu,
-  stopEvent,
-} from "../display_utils.js";
-import {
   FeatureTest,
   MathClamp,
   shadow,
   unreachable,
 } from "../../shared/util.js";
+import { noContextMenu, stopEvent } from "../display_utils.js";
 import { AltText } from "./alt_text.js";
 import { Comment } from "./comment.js";
 import { EditorToolbar } from "./toolbar.js";
@@ -191,7 +186,8 @@ class AnnotationEditor {
     this._initialOptions.isCentered = parameters.isCentered;
     this._structTreeParentId = null;
     this.annotationElementId = parameters.annotationElementId || null;
-    this.creationDate = new Date();
+    this.creationDate = parameters.creationDate || new Date();
+    this.modificationDate = parameters.modificationDate || null;
 
     const {
       rotation,
@@ -1096,10 +1092,23 @@ class AnnotationEditor {
         await this._editToolbar.addButton(name, tool);
       }
     }
-    this._editToolbar.addButton("comment", this.addCommentButton());
+    if (!this.hasComment) {
+      this._editToolbar.addButton("comment", this.addCommentButton());
+    }
     this._editToolbar.addButton("delete");
 
     return this._editToolbar;
+  }
+
+  updateEditToolbar() {
+    if (!this._editToolbar) {
+      return;
+    }
+    this._editToolbar.addButtonBefore(
+      "comment",
+      this.addCommentButton(),
+      ".deleteButton"
+    );
   }
 
   removeEditToolbar() {
@@ -1182,8 +1191,11 @@ class AnnotationEditor {
   }
 
   addStandaloneCommentButton() {
-    this.#comment ||= new Comment(this);
     if (this.#commentStandaloneButton) {
+      this.#commentStandaloneButton.classList.remove("hidden");
+      return;
+    }
+    if (!this.hasComment) {
       return;
     }
     this.#commentStandaloneButton = this.#comment.renderForStandalone();
@@ -1191,36 +1203,44 @@ class AnnotationEditor {
   }
 
   removeStandaloneCommentButton() {
-    this.#commentStandaloneButton?.remove();
+    this.#comment.removeStandaloneCommentButton();
     this.#commentStandaloneButton = null;
   }
 
-  get commentColor() {
-    return null;
+  hideStandaloneCommentButton() {
+    this.#commentStandaloneButton?.classList.add("hidden");
   }
 
   get comment() {
-    const comment = this.#comment;
+    const {
+      data: { richText, text, date, deleted },
+    } = this.#comment;
     return {
-      text: comment.data.text,
-      date: comment.data.date,
-      deleted: comment.isDeleted(),
-      color: this.commentColor,
+      richText,
+      text,
+      date,
+      deleted,
+      color: this.getNonHCMColor(),
+      opacity: this.opacity ?? 1,
     };
   }
 
   set comment(text) {
-    if (!this.#comment) {
-      this.#comment = new Comment(this);
-    }
+    this.#comment ||= new Comment(this);
     this.#comment.data = text;
+    if (this.hasComment) {
+      this.addStandaloneCommentButton();
+      this._uiManager.updateComment(this);
+    } else {
+      this.updateEditToolbar();
+      this.removeStandaloneCommentButton();
+      this._uiManager.removeComment(this);
+    }
   }
 
-  setCommentData(text) {
-    if (!this.#comment) {
-      this.#comment = new Comment(this);
-    }
-    this.#comment.setInitialText(text);
+  setCommentData({ comment, richText }) {
+    this.#comment ||= new Comment(this);
+    this.#comment.setInitialText(comment, richText);
   }
 
   get hasEditedComment() {
@@ -1228,17 +1248,25 @@ class AnnotationEditor {
   }
 
   get hasComment() {
-    return !!this.#comment && !this.#comment.isDeleted();
+    return (
+      !!this.#comment && !this.#comment.isEmpty() && !this.#comment.isDeleted()
+    );
   }
 
-  async editComment() {
-    if (!this.#comment) {
-      this.#comment = new Comment(this);
+  async editComment(options) {
+    this.#comment ||= new Comment(this);
+    this.#comment.edit(options);
+  }
+
+  toggleComment(isSelected, visibility = undefined) {
+    if (this.hasComment) {
+      this._uiManager.toggleComment(this, isSelected, visibility);
     }
-    this.#comment.edit();
   }
 
-  showComment() {}
+  setSelectedCommentButton(selected) {
+    this.#comment.setSelectedButton(selected);
+  }
 
   addComment(serialized) {
     if (this.hasEditedComment) {
@@ -1256,6 +1284,10 @@ class AnnotationEditor {
         rect: [blX, blY, trX, trY],
       };
     }
+  }
+
+  get parentBoundingClientRect() {
+    return this.parent.boundingClientRect;
   }
 
   /**
@@ -1305,6 +1337,7 @@ class AnnotationEditor {
       });
     }
 
+    this.addStandaloneCommentButton();
     this._uiManager._editorUndoBar?.hide();
 
     return div;
@@ -1445,6 +1478,7 @@ class AnnotationEditor {
         e => {
           if (!hasDraggingStarted) {
             hasDraggingStarted = true;
+            this._uiManager.toggleComment(this, false);
             this._onStartDragging();
           }
           const { clientX: x, clientY: y, pointerId } = e;
@@ -1610,14 +1644,34 @@ class AnnotationEditor {
     return this.getRect(0, 0);
   }
 
+  getNonHCMColor() {
+    return (
+      this.color &&
+      AnnotationEditor._colorManager.convert(
+        this._uiManager.getNonHCMColor(this.color)
+      )
+    );
+  }
+
   getData() {
+    const {
+      comment: { text: str, color, date, opacity, deleted, richText },
+      uid: id,
+      pageIndex,
+      creationDate,
+      modificationDate,
+    } = this;
     return {
-      id: this.uid,
-      pageIndex: this.pageIndex,
+      id,
+      pageIndex,
       rect: this.getPDFRect(),
-      contentsObj: { str: this.comment.text },
-      creationDate: this.creationDate,
-      popupRef: !this.#comment.isDeleted(),
+      richText,
+      contentsObj: { str },
+      creationDate,
+      modificationDate: date || modificationDate,
+      popupRef: !deleted,
+      color,
+      opacity,
     };
   }
 
@@ -1767,6 +1821,8 @@ class AnnotationEditor {
       id: parent.getNextId(),
       uiManager,
       annotationElementId: data.annotationElementId,
+      creationDate: data.creationDate,
+      modificationDate: data.modificationDate,
     });
     editor.rotation = data.rotation;
     editor.#accessibilityData = data.accessibilityData;
@@ -1863,14 +1919,30 @@ class AnnotationEditor {
   }
 
   get commentButtonColor() {
-    if (!this.color) {
-      return null;
-    }
-    let [r, g, b] = AnnotationEditor._colorManager.convert(
-      this._uiManager.getNonHCMColor(this.color)
+    return this._uiManager.makeCommentColor(
+      this.getNonHCMColor(),
+      this.opacity
     );
-    [r, g, b] = applyOpacity(r, g, b, this.opacity);
-    return changeLightness(r, g, b);
+  }
+
+  get commentPopupPosition() {
+    return this.#comment.commentPopupPositionInLayer;
+  }
+
+  set commentPopupPosition(pos) {
+    this.#comment.commentPopupPositionInLayer = pos;
+  }
+
+  get commentButtonWidth() {
+    return this.#comment.commentButtonWidth;
+  }
+
+  get elementBeforePopup() {
+    return this.div;
+  }
+
+  setCommentButtonStates(options) {
+    this.#comment.setCommentButtonStates(options);
   }
 
   /**
@@ -2044,6 +2116,9 @@ class AnnotationEditor {
     }
     this._editToolbar?.hide();
     this.#altText?.toggleAltTextBadge(true);
+    if (this.hasComment) {
+      this._uiManager.toggleComment(this, false, false);
+    }
   }
 
   /**
@@ -2091,6 +2166,10 @@ class AnnotationEditor {
    * @param {MouseEvent} event
    */
   dblclick(event) {
+    if (event.target.nodeName === "BUTTON") {
+      // Avoid entering in edit mode when clicking on the comment button.
+      return;
+    }
     this.enterInEditMode();
     this.parent.updateToolbar({
       mode: this.constructor._editorType,
