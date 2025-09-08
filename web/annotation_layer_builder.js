@@ -26,6 +26,7 @@
 /** @typedef {import("./text_accessibility.js").TextAccessibilityManager} TextAccessibilityManager */
 // eslint-disable-next-line max-len
 /** @typedef {import("../src/display/editor/tools.js").AnnotationEditorUIManager} AnnotationEditorUIManager */
+/** @typedef {import("./comment_manager.js").CommentManager} CommentManager */
 
 import {
   AnnotationLayer,
@@ -53,6 +54,7 @@ import { PresentationModeState } from "./ui_utils.js";
  * @property {TextAccessibilityManager} [accessibilityManager]
  * @property {AnnotationEditorUIManager} [annotationEditorUIManager]
  * @property {function} [onAppend]
+ * @property {CommentManager} [commentManager]
  */
 
 /**
@@ -71,6 +73,8 @@ import { PresentationModeState } from "./ui_utils.js";
 
 class AnnotationLayerBuilder {
   #annotations = null;
+
+  #commentManager = null;
 
   #externalHide = false;
 
@@ -98,6 +102,7 @@ class AnnotationLayerBuilder {
     accessibilityManager = null,
     annotationEditorUIManager = null,
     onAppend = null,
+    commentManager = null,
   }) {
     this.pdfPage = pdfPage;
     this.linkService = linkService;
@@ -113,6 +118,7 @@ class AnnotationLayerBuilder {
     this._accessibilityManager = accessibilityManager;
     this._annotationEditorUIManager = annotationEditorUIManager;
     this.#onAppend = onAppend;
+    this.#commentManager = commentManager;
 
     this.annotationLayer = null;
     this.div = null;
@@ -201,6 +207,7 @@ class AnnotationLayerBuilder {
       accessibilityManager: this._accessibilityManager,
       annotationCanvasMap: this._annotationCanvasMap,
       annotationEditorUIManager: this._annotationEditorUIManager,
+      commentManager: this.#commentManager,
       page: this.pdfPage,
       viewport: viewport.clone({ dontFlip: true }),
       structTreeLayer,

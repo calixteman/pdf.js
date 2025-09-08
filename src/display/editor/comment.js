@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { noContextMenu } from "../display_utils.js";
+import { noContextMenu, stopEvent } from "../display_utils.js";
 
 class Comment {
   #commentStandaloneButton = null;
@@ -32,6 +32,10 @@ class Comment {
 
   #deleted = false;
 
+  #popupPosition = null;
+
+  #richText = null;
+
   constructor(editor) {
     this.#editor = editor;
   }
@@ -40,7 +44,7 @@ class Comment {
     const button = (this.#commentToolbarButton =
       document.createElement("button"));
     button.className = "comment";
-    return this.#render(button);
+    return this.#render(button, false);
   }
 
   renderForStandalone() {
@@ -64,16 +68,70 @@ class Comment {
       }
     }
 
-    return this.#render(button);
+    return this.#render(button, true);
   }
 
-  #render(comment) {
+  get commentButtonWidth() {
+    return (
+      (this.#commentStandaloneButton?.getBoundingClientRect().width ?? 0) /
+      this.#editor.parent.boundingClientRect.width
+    );
+  }
+
+  get commentPopupPositionInLayer() {
+    if (this.#popupPosition) {
+      return this.#popupPosition;
+    }
+    if (!this.#commentStandaloneButton) {
+      return null;
+    }
+    const { x, y, height } =
+      this.#commentStandaloneButton.getBoundingClientRect();
+    const {
+      x: parentX,
+      y: parentY,
+      width: parentWidth,
+      height: parentHeight,
+    } = this.#editor.parent.boundingClientRect;
+    return [
+      (x - parentX) / parentWidth,
+      (y + height + 2 - parentY) / parentHeight,
+    ];
+  }
+
+  set commentPopupPositionInLayer(pos) {
+    this.#popupPosition = pos;
+  }
+
+  removeStandaloneCommentButton() {
+    this.#commentStandaloneButton?.remove();
+    this.#commentStandaloneButton = null;
+  }
+
+  setCommentButtonStates({ selected, hasPopup }) {
+    if (!this.#commentStandaloneButton) {
+      return;
+    }
+    this.#commentStandaloneButton.classList.toggle("selected", selected);
+    this.#commentStandaloneButton.ariaExpanded = hasPopup;
+  }
+
+  #render(comment, isStandalone) {
     if (!this.#editor._uiManager.hasCommentManager()) {
       return null;
     }
 
     comment.tabIndex = "0";
-    comment.setAttribute("data-l10n-id", "pdfjs-editor-edit-comment-button");
+    comment.ariaHasPopup = "dialog";
+
+    if (isStandalone) {
+      comment.ariaControls = "commentPopup";
+    } else {
+      comment.ariaControlsElements = [
+        this.#editor._uiManager.getCommentDialogElement(),
+      ];
+      comment.setAttribute("data-l10n-id", "pdfjs-editor-edit-comment-button");
+    }
 
     const signal = this.#editor._uiManager._signal;
     if (!(signal instanceof AbortSignal) || signal.aborted) {
@@ -81,6 +139,30 @@ class Comment {
     }
 
     comment.addEventListener("contextmenu", noContextMenu, { signal });
+    if (isStandalone) {
+      comment.addEventListener(
+        "focusin",
+        e => {
+          this.#editor._focusEventsAllowed = false;
+          stopEvent(e);
+        },
+        {
+          capture: true,
+          signal,
+        }
+      );
+      comment.addEventListener(
+        "focusout",
+        e => {
+          this.#editor._focusEventsAllowed = true;
+          stopEvent(e);
+        },
+        {
+          capture: true,
+          signal,
+        }
+      );
+    }
     comment.addEventListener("pointerdown", event => event.stopPropagation(), {
       signal,
     });
@@ -90,7 +172,7 @@ class Comment {
       if (comment === this.#commentToolbarButton) {
         this.edit();
       } else {
-        this.#editor._uiManager.toggleComment(this.#editor);
+        this.#editor.toggleComment(/* isSelected = */ true);
       }
     };
     comment.addEventListener("click", onClick, { capture: true, signal });
@@ -105,18 +187,52 @@ class Comment {
       { signal }
     );
 
+    comment.addEventListener(
+      "pointerenter",
+      () => {
+        this.#editor.toggleComment(
+          /* isSelected = */ false,
+          /* visibility = */ true
+        );
+      },
+      { signal }
+    );
+    comment.addEventListener(
+      "pointerleave",
+      () => {
+        this.#editor.toggleComment(/* isSelected = */ false, false);
+      },
+      { signal }
+    );
+
     return comment;
   }
 
-  edit() {
-    const { bottom, left, right } = this.#editor.getClientDimensions();
-    const position = { top: bottom };
-    if (this.#editor._uiManager.direction === "ltr") {
-      position.right = right;
+  edit(options) {
+    const position = this.commentPopupPositionInLayer;
+    let posX, posY;
+    if (position) {
+      [posX, posY] = position;
     } else {
-      position.left = left;
+      // The position is in the editor coordinates.
+      [posX, posY] = this.#editor.commentButtonPosition;
+      const { width, height, x, y } = this.#editor;
+      posX = x + posX * width;
+      posY = y + posY * height;
     }
-    this.#editor._uiManager.editComment(this.#editor, position);
+    const parentDimensions = this.#editor.parent.boundingClientRect;
+    const {
+      x: parentX,
+      y: parentY,
+      width: parentWidth,
+      height: parentHeight,
+    } = parentDimensions;
+    this.#editor._uiManager.editComment(
+      this.#editor,
+      parentX + posX * parentWidth,
+      parentY + posY * parentHeight,
+      { ...options, parentDimensions }
+    );
   }
 
   finish() {
@@ -133,6 +249,10 @@ class Comment {
     return this.#deleted || this.#text === "";
   }
 
+  isEmpty() {
+    return this.#text === null;
+  }
+
   hasBeenEdited() {
     return this.isDeleted() || this.#text !== this.#initialText;
   }
@@ -143,9 +263,10 @@ class Comment {
 
   get data() {
     return {
+      richText: this.#richText,
       text: this.#text,
       date: this.#date,
-      deleted: this.#deleted,
+      deleted: this.isDeleted(),
     };
   }
 
@@ -153,6 +274,9 @@ class Comment {
    * Set the comment data.
    */
   set data(text) {
+    if (text !== this.#text) {
+      this.#richText = null;
+    }
     if (text === null) {
       this.#text = "";
       this.#deleted = true;
@@ -163,9 +287,11 @@ class Comment {
     this.#deleted = false;
   }
 
-  setInitialText(text) {
+  setInitialText(text, richText = null) {
     this.#initialText = text;
     this.data = text;
+    this.#date = null;
+    this.#richText = richText;
   }
 
   shown() {}
@@ -180,6 +306,7 @@ class Comment {
     this.#editor = null;
     this.#commentWasFromKeyBoard = false;
     this.#deleted = false;
+    this.#richText = null;
   }
 }
 
