@@ -385,6 +385,8 @@ class Page {
   }
 
   async save(handler, task, annotationStorage, changes) {
+    console.log("saveNewAnnotations", annotationStorage);
+
     const partialEvaluator = this.#createPartialEvaluator(handler);
 
     // Fetch the page's annotations and save the content

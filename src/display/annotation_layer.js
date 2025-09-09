@@ -27,6 +27,7 @@
 
 import {
   AnnotationBorderStyleType,
+  AnnotationEditorPrefix,
   AnnotationEditorType,
   AnnotationPrefix,
   AnnotationType,
@@ -2449,6 +2450,124 @@ class PopupElement {
       style.backgroundColor = this.#commentButtonColor;
     }
     parentContainer.after(button);
+  }
+
+  get commentButtonColor() {
+    const {
+      data: { color, opacity },
+    } = this.#firstElement;
+    if (!color) {
+      return null;
+    }
+    return this.#parent._commentManager.makeCommentColor(color, opacity);
+  }
+
+  getData() {
+    return this.#firstElement.data;
+  }
+
+  get elementBeforePopup() {
+    return this.#commentButton;
+  }
+
+  get comment() {
+    return this.#firstElement.data.contentsObj?.str || "";
+  }
+
+  set comment(text) {
+    const element = this.#firstElement;
+    const { data } = element;
+    if (text === data.contentsObj?.str) {
+      return;
+    }
+    const popup = {};
+    const storageData = {
+      id: data.id,
+      annotationType: data.annotationType,
+      pageIndex: element.parent.page._pageIndex,
+      popup,
+      popupRef: data.popupRef,
+    };
+    if (text) {
+      data.contentsObj = { str: text };
+      popup.contents = text;
+    } else {
+      data.contentsObj = null;
+      element.removePopup();
+      popup.deleted = true;
+    }
+    element.annotationStorage.setValue(
+      `${AnnotationEditorPrefix}${data.id}`,
+      storageData
+    );
+    element.data.modificationDate = new Date();
+  }
+
+  get parentBoundingClientRect() {
+    return this.#firstElement.layer.getBoundingClientRect();
+  }
+
+  setCommentButtonStates({ selected, hasPopup }) {
+    if (!this.#commentButton) {
+      return;
+    }
+    this.#commentButton.classList.toggle("selected", selected);
+    this.#commentButton.ariaExpanded = hasPopup;
+  }
+
+  setSelectedCommentButton(selected) {
+    this.#commentButton.classList.toggle("selected", selected);
+  }
+
+  get commentPopupPosition() {
+    if (this.#popupPosition) {
+      return this.#popupPosition;
+    }
+    const { x, y, height } = this.#commentButton.getBoundingClientRect();
+    const {
+      x: parentX,
+      y: parentY,
+      width: parentWidth,
+      height: parentHeight,
+    } = this.#firstElement.layer.getBoundingClientRect();
+    return [
+      (x - parentX) / parentWidth,
+      (y + height + 2 - parentY) / parentHeight,
+    ];
+  }
+
+  set commentPopupPosition(pos) {
+    this.#popupPosition = pos;
+  }
+
+  get commentButtonPosition() {
+    return this.#commentButtonPosition;
+  }
+
+  get commentButtonWidth() {
+    return (
+      this.#commentButton.getBoundingClientRect().width /
+      this.parentBoundingClientRect.width
+    );
+  }
+
+  editComment(options) {
+    const [posX, posY] =
+      this.#popupPosition || this.commentButtonPosition.map(x => x / 100);
+    const parentDimensions = this.parentBoundingClientRect;
+    const {
+      x: parentX,
+      y: parentY,
+      width: parentWidth,
+      height: parentHeight,
+    } = parentDimensions;
+    this.#commentManager.showDialog(
+      null,
+      this,
+      parentX + posX * parentWidth,
+      parentY + posY * parentHeight,
+      { ...options, parentDimensions }
+    );
   }
 
   render() {
