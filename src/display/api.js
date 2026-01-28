@@ -3011,7 +3011,11 @@ class WorkerTransport {
       num: ref.num,
       gen: ref.gen,
     });
-    return this.#pagesMapper.getPageNumber(index + 1) - 1;
+    const pageNumber = this.#pagesMapper.getPageNumber(index + 1);
+    if (pageNumber === 0) {
+      throw new Error("GetPageIndex: page has been removed.");
+    }
+    return pageNumber - 1;
   }
 
   getAnnotations(pageIndex, intent) {
@@ -3160,9 +3164,13 @@ class WorkerTransport {
     }
     const refStr = ref.gen === 0 ? `${ref.num}R` : `${ref.num}R${ref.gen}`;
     const pageIndex = this.#pageRefCache.get(refStr);
-    return pageIndex >= 0
-      ? this.#pagesMapper.getPageNumber(pageIndex + 1)
-      : null;
+    if (pageIndex >= 0) {
+      const pageNumber = this.#pagesMapper.getPageNumber(pageIndex + 1);
+      if (pageNumber !== 0) {
+        return pageNumber;
+      }
+    }
+    return null;
   }
 }
 

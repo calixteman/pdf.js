@@ -1181,11 +1181,10 @@ class PDFViewer {
 
   async onBeforePagesEdited({ pagesMapper }) {
     await this._pagesCapability.promise;
-    this._currentPageId = pagesMapper.getPageId(this._currentPageNumber);
   }
 
   onPagesEdited({ pagesMapper }) {
-    this._currentPageNumber = pagesMapper.getPageNumber(this._currentPageId);
+    this._currentPageNumber = 0;
     const prevPages = this._pages;
     const newPages = (this._pages = []);
     for (let i = 0, ii = pagesMapper.pagesNumber; i < ii; i++) {
@@ -1194,7 +1193,7 @@ class PDFViewer {
         continue;
       }
       const page = prevPages[prevPageNumber];
-      newPages[i] = page;
+      newPages.push(page);
       page.updatePageNumber(i + 1);
     }
 

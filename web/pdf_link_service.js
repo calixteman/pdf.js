@@ -16,7 +16,7 @@
 /** @typedef {import("./event_utils").EventBus} EventBus */
 /** @typedef {import("./interfaces").IPDFLinkService} IPDFLinkService */
 
-import { isValidExplicitDest } from "pdfjs-lib";
+import { isValidExplicitDest, PagesMapper } from "pdfjs-lib";
 import { parseQueryString } from "./ui_utils.js";
 
 const DEFAULT_LINK_REL = "noopener noreferrer nofollow";
@@ -87,7 +87,7 @@ class PDFLinkService {
    * @type {number}
    */
   get pagesCount() {
-    return this.pdfDocument ? this.pdfDocument.numPages : 0;
+    return this.pdfDocument ? PagesMapper.instance.pagesNumber : 0;
   }
 
   /**

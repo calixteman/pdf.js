@@ -24,6 +24,7 @@ import {
   getThumbnailSelector,
   loadAndWait,
   scrollIntoView,
+  waitAndClick,
   waitForDOMMutation,
 } from "./test_utils.mjs";
 
@@ -607,7 +608,7 @@ describe("Reorganize Pages View", () => {
             window.PDFViewerApplication.eventBus.on(
               "savepageseditedpdf",
               ({ data }) => {
-                resolve(Array.from(data.pageIndices));
+                resolve(Array.from(data[0].pageIndices));
               },
               {
                 once: true,
@@ -626,6 +627,56 @@ describe("Reorganize Pages View", () => {
             .toEqual([
               1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
             ]);
+        })
+      );
+    });
+  });
+
+  describe("Delete some pages", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "page_with_number.pdf",
+        "#viewsManagerToggleButton",
+        "1",
+        null,
+        { enableSplitMerge: true }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("should check that the pages are deleted", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await waitForThumbnailVisible(page, 1);
+          await page.waitForSelector("#viewsManagerStatusActionButton", {
+            visible: true,
+          });
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(1)}) input`
+          );
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(3)}) input`
+          );
+
+          const handlePagesEdited = await waitForPagesEdited(page);
+          await waitAndClick(page, "#viewsManagerStatusActionButton");
+          await waitAndClick(page, "#viewsManagerStatusActionDelete");
+
+          const pageIndices = await awaitPromise(handlePagesEdited);
+          const expected = [
+            2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+          ];
+          expect(pageIndices)
+            .withContext(`In ${browserName}`)
+            .toEqual(expected);
+          await waitForHavingContents(page, expected);
         })
       );
     });

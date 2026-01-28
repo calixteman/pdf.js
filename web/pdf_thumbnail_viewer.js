@@ -114,6 +114,8 @@ class PDFThumbnailViewer {
 
   #manageSaveAsButton = null;
 
+  #manageDeleteButton = null;
+
   /**
    * @param {PDFThumbnailViewerOptions} options
    */
@@ -151,6 +153,10 @@ class PDFThumbnailViewer {
           data: this.#pagesMapper.getPageMappingForSaving(),
         });
       });
+      this.#manageDeleteButton = del;
+      del.addEventListener("click", this.#deletePages.bind(this));
+
+      saveAs.disabled = del.disabled = true;
     } else {
       manageMenu.button.hidden = true;
     }
@@ -191,7 +197,7 @@ class PDFThumbnailViewer {
     }
     if (pageNumber !== this._currentPageNumber) {
       const prevThumbnailView = this._thumbnails[this._currentPageNumber - 1];
-      prevThumbnailView.toggleCurrent(/* isCurrent = */ false);
+      prevThumbnailView?.toggleCurrent(/* isCurrent = */ false);
       thumbnailView.toggleCurrent(/* isCurrent = */ true);
       this._currentPageNumber = pageNumber;
     }
@@ -200,15 +206,11 @@ class PDFThumbnailViewer {
     // If the thumbnail isn't currently visible, scroll it into view.
     if (views.length > 0) {
       let shouldScroll = false;
-      if (
-        pageNumber <= this.#pagesMapper.getPageNumber(first.id) ||
-        pageNumber >= this.#pagesMapper.getPageNumber(last.id)
-      ) {
+      if (pageNumber <= first.id || pageNumber >= last.id) {
         shouldScroll = true;
       } else {
         for (const { id, percent } of views) {
-          const mappedPageNumber = this.#pagesMapper.getPageNumber(id);
-          if (mappedPageNumber !== pageNumber) {
+          if (id !== pageNumber) {
             continue;
           }
           shouldScroll = percent < 100;
@@ -402,24 +404,29 @@ class PDFThumbnailViewer {
     ));
   }
 
-  #updateThumbnails() {
+  #updateThumbnails(currentPageNumber) {
+    let newCurrentPageNumber = 0;
     const pagesMapper = this.#pagesMapper;
     this.container.replaceChildren();
     const prevThumbnails = this._thumbnails;
     const newThumbnails = (this._thumbnails = []);
     const fragment = document.createDocumentFragment();
-    for (let i = 0, ii = pagesMapper.pagesNumber; i < ii; i++) {
-      const prevPageIndex = pagesMapper.getPrevPageNumber(i + 1) - 1;
-      if (prevPageIndex === -1) {
+    for (let i = 1, ii = pagesMapper.pagesNumber; i <= ii; i++) {
+      const prevPageNumber = pagesMapper.getPrevPageNumber(i);
+      if (prevPageNumber === 0) {
         continue;
       }
-      const newThumbnail = prevThumbnails[prevPageIndex];
+      if (prevPageNumber === currentPageNumber) {
+        newCurrentPageNumber = i;
+      }
+      const newThumbnail = prevThumbnails[prevPageNumber - 1];
       newThumbnails.push(newThumbnail);
-      newThumbnail.updateId(i + 1);
+      newThumbnail.updateId(i);
       newThumbnail.checkbox.checked = false;
       fragment.append(newThumbnail.div);
     }
     this.container.append(fragment);
+    return newCurrentPageNumber;
   }
 
   #onStartDragging(draggedThumbnail) {
@@ -514,15 +521,17 @@ class PDFThumbnailViewer {
           selectedPages.has(lastDraggedOverIndex + 2))
       )
     ) {
+      this._thumbnails[this._currentPageNumber - 1]?.toggleCurrent(
+        /* isCurrent = */ false
+      );
+      this._currentPageNumber = -1;
+
       const newIndex = lastDraggedOverIndex + 1;
       const pagesToMove = Array.from(selectedPages).sort((a, b) => a - b);
       const pagesMapper = this.#pagesMapper;
-      const currentPageId = pagesMapper.getPageId(this._currentPageNumber);
-      const newCurrentPageId = pagesMapper.getPageId(
-        isNaN(this.#pageNumberToRemove)
-          ? pagesToMove[0]
-          : this.#pageNumberToRemove
-      );
+      let currentPageNumber = isNaN(this.#pageNumberToRemove)
+        ? pagesToMove[0]
+        : this.#pageNumberToRemove;
 
       this.eventBus.dispatch("beforepagesedited", {
         source: this,
@@ -531,13 +540,12 @@ class PDFThumbnailViewer {
 
       pagesMapper.movePages(selectedPages, pagesToMove, newIndex);
 
-      this.#updateThumbnails();
-
-      this._currentPageNumber = pagesMapper.getPageNumber(currentPageId);
+      currentPageNumber = this.#updateThumbnails(currentPageNumber);
       this.#computeThumbnailsPosition();
 
       selectedPages.clear();
       this.#pageNumberToRemove = NaN;
+      this.#manageDeleteButton.disabled = true;
 
       const isIdentity = (this.#manageSaveAsButton.disabled =
         !this.#pagesMapper.hasBeenAltered());
@@ -545,14 +553,11 @@ class PDFThumbnailViewer {
         this.eventBus.dispatch("pagesedited", {
           source: this,
           pagesMapper,
-          index: newIndex,
-          pagesToMove,
         });
       }
 
-      const newCurrentPageNumber = pagesMapper.getPageNumber(newCurrentPageId);
       setTimeout(() => {
-        this.linkService.goToPage(newCurrentPageNumber);
+        this.linkService.goToPage(currentPageNumber);
       }, 0);
     }
 
@@ -560,6 +565,37 @@ class PDFThumbnailViewer {
       this.#selectPage(this.#pageNumberToRemove, false);
       this.#pageNumberToRemove = NaN;
     }
+  }
+
+  #deletePages() {
+    const selectedPages = this.#selectedPages;
+    if (selectedPages.size === 0) {
+      return;
+    }
+    const pagesMapper = this.#pagesMapper;
+    let currentPageNumber = selectedPages.has(this._currentPageNumber)
+      ? 0
+      : this._currentPageNumber;
+    const pagesToDelete = Array.from(selectedPages).sort((a, b) => a - b);
+    this.eventBus.dispatch("beforepagesedited", {
+      source: this,
+      pagesMapper,
+    });
+
+    pagesMapper.deletePages(pagesToDelete);
+    currentPageNumber = this.#updateThumbnails(currentPageNumber);
+    selectedPages.clear();
+    this.#manageSaveAsButton.disabled = false;
+    this.#manageDeleteButton.disabled = true;
+
+    this.eventBus.dispatch("pagesedited", {
+      source: this,
+      pagesMapper,
+    });
+
+    setTimeout(() => {
+      this.linkService.goToPage(currentPageNumber || 1);
+    }, 0);
   }
 
   #moveDraggedContainer(dx, dy) {
@@ -748,6 +784,7 @@ class PDFThumbnailViewer {
     } else {
       set.delete(pageNumber);
     }
+    this.#manageDeleteButton.disabled = set.size === 0;
   }
 
   #addDragListeners() {

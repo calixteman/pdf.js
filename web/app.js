@@ -2382,22 +2382,14 @@ const PDFViewerApplication = {
     this.pdfViewer.onPagesEdited(data);
   },
 
-  async onSavePagesEditedPDF({
-    data: { includePages, excludePages, pageIndices },
-  }) {
+  async onSavePagesEditedPDF({ data: extractParams }) {
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING")) {
       return;
     }
     if (!this.pdfDocument) {
       return;
     }
-    const pageInfo = {
-      document: null, // For now, no merge.
-      includePages,
-      excludePages,
-      pageIndices,
-    };
-    const modifiedPdfBytes = await this.pdfDocument.extractPages([pageInfo]);
+    const modifiedPdfBytes = await this.pdfDocument.extractPages(extractParams);
     if (!modifiedPdfBytes) {
       console.error(
         "Something wrong happened when saving the edited PDF.\nPlease file a bug."

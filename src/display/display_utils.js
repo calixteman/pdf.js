@@ -1043,7 +1043,7 @@ function makePathFromDrawOPS(data) {
 class PagesMapper {
   /**
    * Maps page IDs to their corresponding page numbers.
-   * @type {Uint32Array|null}
+   * @type {Map<number, Array<number>>|null}
    */
   static #idToPageNumber = null;
 
@@ -1057,7 +1057,7 @@ class PagesMapper {
    * Previous mapping of page IDs to page numbers.
    * @type {Uint32Array|null}
    */
-  static #prevIdToPageNumber = null;
+  static #prevPageNumbers = null;
 
   /**
    * The total number of pages.
@@ -1089,10 +1089,8 @@ class PagesMapper {
       return;
     }
     PagesMapper.#pagesNumber = n;
-    if (n === 0) {
-      PagesMapper.#pageNumberToId = null;
-      PagesMapper.#idToPageNumber = null;
-    }
+    PagesMapper.#pageNumberToId = null;
+    PagesMapper.#idToPageNumber = null;
   }
 
   addListener(listener) {
@@ -1119,18 +1117,31 @@ class PagesMapper {
     const n = PagesMapper.#pagesNumber;
 
     // Allocate a single array for better memory locality.
-    const array = new Uint32Array(3 * n);
+    const array = new Uint32Array(2 * n);
     const pageNumberToId = (PagesMapper.#pageNumberToId = array.subarray(0, n));
-    const idToPageNumber = (PagesMapper.#idToPageNumber = array.subarray(
-      n,
-      2 * n
-    ));
+    PagesMapper.#prevPageNumbers = array.subarray(n);
+    const idToPageNumber = (PagesMapper.#idToPageNumber = new Map());
     if (mustInit) {
-      for (let i = 0; i < n; i++) {
-        pageNumberToId[i] = idToPageNumber[i] = i + 1;
+      for (let i = 1; i <= n; i++) {
+        pageNumberToId[i - 1] = i;
+        idToPageNumber.set(i, [i]);
       }
     }
-    PagesMapper.#prevIdToPageNumber = array.subarray(2 * n);
+  }
+
+  #updateIdToPageNumber() {
+    const idToPageNumber = PagesMapper.#idToPageNumber;
+    const pageNumberToId = PagesMapper.#pageNumberToId;
+    idToPageNumber.clear();
+    for (let i = 0, ii = PagesMapper.#pagesNumber; i < ii; i++) {
+      const id = pageNumberToId[i];
+      const pageNumbers = idToPageNumber.get(id);
+      if (pageNumbers) {
+        pageNumbers.push(i + 1);
+      } else {
+        idToPageNumber.set(id, [i + 1]);
+      }
+    }
   }
 
   /**
@@ -1145,7 +1156,7 @@ class PagesMapper {
     this.#init(true);
     const pageNumberToId = PagesMapper.#pageNumberToId;
     const idToPageNumber = PagesMapper.#idToPageNumber;
-    PagesMapper.#prevIdToPageNumber.set(idToPageNumber);
+    const prevPageNumbers = PagesMapper.#prevPageNumbers;
     const movedCount = pagesToMove.length;
     const mappedPagesToMove = new Uint32Array(movedCount);
     let removedBeforeTarget = 0;
@@ -1186,14 +1197,57 @@ class PagesMapper {
     for (let i = 0, ii = pagesNumber; i < ii; i++) {
       const id = pageNumberToId[i];
       hasChanged ||= id !== i + 1;
-      idToPageNumber[id - 1] = i + 1;
+      prevPageNumbers[i] = idToPageNumber.get(id)[0];
     }
+
+    this.#updateIdToPageNumber();
     this.#updateListeners();
 
     if (!hasChanged) {
       // Reset.
       this.pagesNumber = 0;
     }
+  }
+
+  /**
+   * Deletes a set of pages while keeping ID→number mappings in sync.
+   * @param {Array<number>} pagesToDelete - Page numbers to delete (1-indexed).
+   *  These must be unique and sorted in ascending order.
+   * @returns
+   */
+  deletePages(pagesToDelete) {
+    if (pagesToDelete.length === 0) {
+      return;
+    }
+    this.#init(true);
+    const pageNumberToId = PagesMapper.#pageNumberToId;
+    const prevIdToPageNumber = PagesMapper.#idToPageNumber;
+
+    this.pagesNumber -= pagesToDelete.length;
+    this.#init(false);
+    const newPageNumberToId = PagesMapper.#pageNumberToId;
+    const prevPageNumbers = PagesMapper.#prevPageNumbers;
+
+    let j = 0;
+    let k = 0;
+    for (let i = 0, ii = pagesToDelete.length; i < ii; i++) {
+      const m = pagesToDelete[i] - 1;
+      if (m !== j) {
+        newPageNumberToId.set(pageNumberToId.subarray(j, m), k);
+        k += m - j;
+      }
+      j = m + 1;
+    }
+    if (j < pageNumberToId.length) {
+      newPageNumberToId.set(pageNumberToId.subarray(j), k);
+    }
+
+    for (let i = 0, ii = PagesMapper.#pagesNumber; i < ii; i++) {
+      prevPageNumbers[i] = prevIdToPageNumber.get(newPageNumberToId[i])[0];
+    }
+
+    this.#updateIdToPageNumber();
+    this.#updateListeners();
   }
 
   /**
@@ -1209,27 +1263,71 @@ class PagesMapper {
    * @returns {Object} An object containing the page indices.
    */
   getPageMappingForSaving() {
-    // Saving is index-based.
-    return {
-      pageIndices: PagesMapper.#idToPageNumber
-        ? PagesMapper.#idToPageNumber.map(x => x - 1)
-        : null,
-    };
+    const idToPageNumber = PagesMapper.#idToPageNumber;
+
+    // idToPageNumber maps used 1-based IDs to 1-based page numbers.
+    // For example if the final pdf contains page 3 twice and they are moved at
+    // page 1 and 4, then it contains:
+    //   pageNumberToId = [3, ., ., 3, ...,]
+    //   idToPageNumber = {3: [1, 4], ...}
+    // In such a case we need to take a page 3 from the original pdf and take
+    // page 3 from a "copy".
+    // So we need to pass to the api something like:
+    // [ {
+    //   document: null // this pdf
+    //   includePages: [ 2, ... ], // page 3 is at index 2
+    //   pageIndices: [0, ...], // page 3 will be at index 0 in the new pdf
+    // }, {
+    //   document: null // this pdf
+    //   includePages: [ 2, ... ], // page 3 is at index 2
+    //   pageIndices: [3, ...], // page 3 will be at index 3 in the new pdf
+    // }
+    // ]
+
+    let nCopy = 0;
+    for (const pageNumbers of idToPageNumber.values()) {
+      nCopy = Math.max(nCopy, pageNumbers.length);
+    }
+
+    const extractParams = new Array(nCopy);
+    for (let i = 0; i < nCopy; i++) {
+      extractParams[i] = {
+        document: null,
+        pageIndices: [],
+        includePages: [],
+      };
+    }
+
+    for (const [id, pageNumbers] of idToPageNumber) {
+      for (let i = 0, ii = pageNumbers.length; i < ii; i++) {
+        extractParams[i].includePages.push([id - 1, pageNumbers[i] - 1]);
+      }
+    }
+
+    for (const { includePages, pageIndices } of extractParams) {
+      includePages.sort((a, b) => a[0] - b[0]);
+      for (let i = 0, ii = includePages.length; i < ii; i++) {
+        pageIndices.push(includePages[i][1]);
+        includePages[i] = includePages[i][0];
+      }
+    }
+
+    return extractParams;
   }
 
   getPrevPageNumber(pageNumber) {
-    return PagesMapper.#prevIdToPageNumber[
-      PagesMapper.#pageNumberToId[pageNumber - 1] - 1
-    ];
+    return PagesMapper.#prevPageNumbers[pageNumber - 1] ?? 0;
   }
 
   /**
    * Gets the page number for a given page ID.
    * @param {number} id - The page ID (1-indexed).
-   * @returns {number} The page number, or the ID itself if no mapping exists.
+   * @returns {number} The page number, or 0 if no mapping exists.
    */
   getPageNumber(id) {
-    return PagesMapper.#idToPageNumber?.[id - 1] ?? id;
+    return PagesMapper.#idToPageNumber
+      ? (PagesMapper.#idToPageNumber.get(id)?.[0] ?? 0)
+      : id;
   }
 
   /**
