@@ -153,6 +153,9 @@
     --image-current-focused-outline-color: var(--image-hover-border-color);
     --image-page-number-bg: ButtonFace;
     --image-page-number-fg: CanvasText;
+    --image-current-page-number-bg: ButtonFace;
+    --image-current-page-number-fg: ButtonText;
+    --image-current-border-color: ButtonText;
     --multiple-dragging-bg: Canvas;
   }
 
@@ -627,6 +630,7 @@
 
         &:has([aria-current="page"]):not(.isDragging)
           > .thumbnailImageContainer::after {
+          outline: 1px solid var(--image-current-border-color);
           background-color: var(--image-current-page-number-bg);
           color: var(--image-current-page-number-fg);
         }
