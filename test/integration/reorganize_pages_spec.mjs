@@ -23,6 +23,9 @@ import {
   getAnnotationSelector,
   getRect,
   getThumbnailSelector,
+  kbCopy,
+  kbCut,
+  kbDelete,
   loadAndWait,
   scrollIntoView,
   waitAndClick,
@@ -798,6 +801,128 @@ describe("Reorganize Pages View", () => {
           pageIndices = await awaitPromise(handlePagesEdited);
           expected = [
             1, 2, 1, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+          ];
+          expect(pageIndices)
+            .withContext(`In ${browserName}`)
+            .toEqual(expected);
+          await waitForHavingContents(page, expected);
+        })
+      );
+    });
+  });
+
+  describe("Keyboard shortcuts for cut and copy (bug 2018139)", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "page_with_number.pdf",
+        "#viewsManagerToggleButton",
+        "1",
+        null,
+        { enableSplitMerge: true }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("should cut pages with Ctrl+X and paste them", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await waitForThumbnailVisible(page, 1);
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(1)}) input`
+          );
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(3)}) input`
+          );
+
+          let handlePagesEdited = await waitForPagesEdited(page, "cut");
+          await kbCut(page);
+
+          let pageIndices = await awaitPromise(handlePagesEdited);
+          let expected = [2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+          expect(pageIndices)
+            .withContext(`In ${browserName}`)
+            .toEqual(expected);
+          await waitForHavingContents(page, expected);
+
+          handlePagesEdited = await waitForPagesEdited(page);
+          await waitAndClick(page, `${getThumbnailSelector(1)}+button`);
+          pageIndices = await awaitPromise(handlePagesEdited);
+          expected = [
+            2, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+          ];
+          expect(pageIndices)
+            .withContext(`In ${browserName}`)
+            .toEqual(expected);
+          await waitForHavingContents(page, expected);
+        })
+      );
+    });
+
+    it("should copy pages with Ctrl+C and paste them", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await waitForThumbnailVisible(page, 1);
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(1)}) input`
+          );
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(3)}) input`
+          );
+
+          let handlePagesEdited = await waitForPagesEdited(page, "copy");
+          await kbCopy(page);
+
+          let pageIndices = await awaitPromise(handlePagesEdited);
+          let expected = [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+          ];
+          expect(pageIndices)
+            .withContext(`In ${browserName}`)
+            .toEqual(expected);
+          await waitForHavingContents(page, expected);
+
+          handlePagesEdited = await waitForPagesEdited(page);
+          await waitAndClick(page, `${getThumbnailSelector(2)}+button`);
+          pageIndices = await awaitPromise(handlePagesEdited);
+          expected = [
+            1, 2, 1, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+          ];
+          expect(pageIndices)
+            .withContext(`In ${browserName}`)
+            .toEqual(expected);
+          await waitForHavingContents(page, expected);
+        })
+      );
+    });
+
+    it("should delete pages with the Delete key", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await waitForThumbnailVisible(page, 1);
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(1)}) input`
+          );
+          await waitAndClick(
+            page,
+            `.thumbnail:has(${getThumbnailSelector(3)}) input`
+          );
+
+          const handlePagesEdited = await waitForPagesEdited(page);
+          await kbDelete(page);
+
+          const pageIndices = await awaitPromise(handlePagesEdited);
+          const expected = [
+            2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
           ];
           expect(pageIndices)
             .withContext(`In ${browserName}`)

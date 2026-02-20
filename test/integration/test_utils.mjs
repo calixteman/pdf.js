@@ -702,6 +702,14 @@ async function kbCopy(page) {
   await page.keyboard.press("c", { commands: ["Copy"] });
   await page.keyboard.up(modifier);
 }
+async function kbCut(page) {
+  await page.keyboard.down(modifier);
+  await page.keyboard.press("x", { commands: ["Cut"] });
+  await page.keyboard.up(modifier);
+}
+async function kbDelete(page) {
+  await page.keyboard.press("Delete");
+}
 async function kbPaste(page) {
   await page.keyboard.down(modifier);
   await page.keyboard.press("v", { commands: ["Paste"] });
@@ -997,6 +1005,9 @@ export {
   kbBigMoveLeft,
   kbBigMoveRight,
   kbBigMoveUp,
+  kbCopy,
+  kbCut,
+  kbDelete,
   kbDeleteLastWord,
   kbFocusNext,
   kbFocusPrevious,

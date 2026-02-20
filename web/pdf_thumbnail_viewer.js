@@ -884,6 +884,33 @@ class PDFThumbnailViewer {
           }
           // For checkboxes, let the default behavior handle toggling
           break;
+        case "c":
+          if (
+            this.#enableSplitMerge &&
+            (e.ctrlKey || e.metaKey) &&
+            this.#selectedPages?.size
+          ) {
+            this.#copyPages();
+            stopEvent(e);
+          }
+          break;
+        case "x":
+          if (
+            this.#enableSplitMerge &&
+            (e.ctrlKey || e.metaKey) &&
+            this.#selectedPages?.size
+          ) {
+            this.#cutPages();
+            stopEvent(e);
+          }
+          break;
+        case "Delete":
+        case "Backspace":
+          if (this.#enableSplitMerge && this.#selectedPages?.size) {
+            this.#deletePages();
+            stopEvent(e);
+          }
+          break;
       }
     });
     this.container.addEventListener("click", e => {
