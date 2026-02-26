@@ -34,6 +34,9 @@ import {
 
 async function waitForThumbnailVisible(page, pageNums) {
   await page.click("#viewsManagerToggleButton");
+  await page.waitForSelector("#viewsManagerStatusActionButton:not(:disabled)", {
+    visible: true,
+  });
 
   const thumbSelector = "#thumbnailsView .thumbnailImageContainer > img";
   await page.waitForSelector(thumbSelector, { visible: true });

@@ -132,6 +132,8 @@ class PDFThumbnailView extends RenderableView {
     imageContainer.tabIndex = -1;
     imageContainer.draggable = false;
     imageContainer.setAttribute("page-number", id);
+    imageContainer.setAttribute("data-l10n-id", "pdfjs-thumb-page-title1");
+    imageContainer.setAttribute("data-l10n-args", this.#getPageL10nArgs(true));
 
     const image = (this.image = document.createElement("img"));
     imageContainer.append(image);
@@ -140,8 +142,8 @@ class PDFThumbnailView extends RenderableView {
       const checkbox = (this.checkbox = document.createElement("input"));
       checkbox.type = "checkbox";
       checkbox.tabIndex = -1;
-      checkbox.setAttribute("data-l10n-id", "pdfjs-thumb-page-checkbox");
-      checkbox.setAttribute("data-l10n-args", this.#pageL10nArgs);
+      checkbox.setAttribute("data-l10n-id", "pdfjs-thumb-page-checkbox1");
+      checkbox.setAttribute("data-l10n-args", this.#getPageL10nArgs());
       thumbnailContainer.append(checkbox);
       this.pasteButton = null;
     }
@@ -332,8 +334,8 @@ class PDFThumbnailView extends RenderableView {
     reducedCanvas.toBlob(resolve);
     const blob = await promise;
     image.src = URL.createObjectURL(blob);
-    imageContainer.setAttribute("data-l10n-id", "pdfjs-thumb-page-canvas");
-    imageContainer.setAttribute("data-l10n-args", this.#pageL10nArgs);
+    image.setAttribute("data-l10n-id", "pdfjs-thumb-page-canvas");
+    image.setAttribute("data-l10n-args", this.#getPageL10nArgs());
     imageContainer.classList.remove("missingThumbnailImage");
     if (!FeatureTest.isOffscreenCanvasSupported) {
       // Clean up the canvas element since it is no longer needed.
@@ -526,8 +528,11 @@ class PDFThumbnailView extends RenderableView {
     return canvas;
   }
 
-  get #pageL10nArgs() {
-    return JSON.stringify({ page: this.pageLabel ?? this.id });
+  #getPageL10nArgs(hasTotal = false) {
+    return JSON.stringify({
+      page: this.pageLabel ?? this.id,
+      total: hasTotal ? this.linkService.pagesCount : undefined,
+    });
   }
 
   /**
@@ -535,8 +540,12 @@ class PDFThumbnailView extends RenderableView {
    */
   setPageLabel(label) {
     this.pageLabel = typeof label === "string" ? label : null;
-    this.imageContainer.setAttribute("data-l10n-args", this.#pageL10nArgs);
-    this.checkbox?.setAttribute("data-l10n-args", this.#pageL10nArgs);
+    this.imageContainer.setAttribute(
+      "data-l10n-args",
+      this.#getPageL10nArgs(true)
+    );
+    this.image.setAttribute("data-l10n-args", this.#getPageL10nArgs());
+    this.checkbox?.setAttribute("data-l10n-args", this.#getPageL10nArgs());
   }
 }
 

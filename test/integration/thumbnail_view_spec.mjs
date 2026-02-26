@@ -2,16 +2,14 @@ import {
   awaitPromise,
   closePages,
   FSI,
+  getThumbnailSelector,
   kbFocusNext,
   loadAndWait,
   PDI,
 } from "./test_utils.mjs";
 
 function waitForThumbnailVisible(page, pageNum) {
-  return page.waitForSelector(
-    `.thumbnailImageContainer[data-l10n-args='{"page":${pageNum}}']`,
-    { visible: true }
-  );
+  return page.waitForSelector(getThumbnailSelector(pageNum), { visible: true });
 }
 
 async function waitForMenu(page, buttonSelector, visible = true) {
@@ -55,6 +53,14 @@ describe("PDF Thumbnail View", () => {
           await page.waitForSelector(`${thumbSelector}[src^="blob:http:"]`, {
             visible: true,
           });
+
+          const title = await page.$eval(
+            getThumbnailSelector(1),
+            el => el.title
+          );
+          expect(title)
+            .withContext(`In ${browserName}`)
+            .toBe(`Page ${FSI}1${PDI} of ${FSI}14${PDI}`);
         })
       );
     });
@@ -110,7 +116,7 @@ describe("PDF Thumbnail View", () => {
 
           for (const pageNum of [14, 1, 13, 2]) {
             await goToPage(page, pageNum);
-            const thumbSelector = `.thumbnailImageContainer[data-l10n-args='{"page":${pageNum}}']`;
+            const thumbSelector = getThumbnailSelector(pageNum);
             await page.waitForSelector(
               `.thumbnail ${thumbSelector}[aria-current="page"]`,
               { visible: true }
@@ -142,6 +148,12 @@ describe("PDF Thumbnail View", () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
           await page.click("#viewsManagerToggleButton");
+          await page.waitForSelector(
+            "#viewsManagerStatusActionButton:not(:disabled)",
+            {
+              visible: true,
+            }
+          );
 
           await waitForThumbnailVisible(page, 1);
           await waitForThumbnailVisible(page, 2);
@@ -159,26 +171,25 @@ describe("PDF Thumbnail View", () => {
 
           await kbFocusNext(page);
           await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":1}']:focus`,
+            `#thumbnailsView ${getThumbnailSelector(1)}:focus`,
             { visible: true }
           );
 
           await page.keyboard.press("ArrowDown");
           await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":2}']:focus`,
+            `#thumbnailsView ${getThumbnailSelector(2)}:focus`,
             { visible: true }
           );
 
           await page.keyboard.press("ArrowUp");
-          await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":1}']:focus`,
-            { visible: true }
-          );
+          await page.waitForSelector(`${getThumbnailSelector(1)}:focus`, {
+            visible: true,
+          });
 
           await page.keyboard.press("ArrowDown");
           await page.keyboard.press("ArrowDown");
           await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":3}']:focus`,
+            `#thumbnailsView ${getThumbnailSelector(3)}:focus`,
             { visible: true }
           );
 
@@ -191,13 +202,13 @@ describe("PDF Thumbnail View", () => {
 
           await page.keyboard.press("End");
           await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":14}']:focus`,
+            `#thumbnailsView ${getThumbnailSelector(14)}:focus`,
             { visible: true }
           );
 
           await page.keyboard.press("Home");
           await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":1}']:focus`,
+            `#thumbnailsView ${getThumbnailSelector(1)}:focus`,
             { visible: true }
           );
         })
@@ -236,6 +247,12 @@ describe("PDF Thumbnail View", () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
           await page.click("#viewsManagerToggleButton");
+          await page.waitForSelector(
+            "#viewsManagerStatusActionButton:not(:disabled)",
+            {
+              visible: true,
+            }
+          );
           await waitForThumbnailVisible(page, 1);
 
           await enableMenuItems(page);
@@ -268,6 +285,12 @@ describe("PDF Thumbnail View", () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
           await page.click("#viewsManagerToggleButton");
+          await page.waitForSelector(
+            "#viewsManagerStatusActionButton:not(:disabled)",
+            {
+              visible: true,
+            }
+          );
           await waitForThumbnailVisible(page, 1);
 
           await enableMenuItems(page);
@@ -323,18 +346,18 @@ describe("PDF Thumbnail View", () => {
       await closePages(pages);
     });
 
-    it("should have accessible label on checkbox", async () => {
+    it("should have a title on the checkbox", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
           await page.click("#viewsManagerToggleButton");
 
           await waitForThumbnailVisible(page, 1);
 
-          const ariaLabel = await page.$eval(
+          const title = await page.$eval(
             `.thumbnail[page-number="1"] input[type="checkbox"]`,
-            el => el.getAttribute("aria-label")
+            el => el.title
           );
-          expect(ariaLabel)
+          expect(title)
             .withContext(`In ${browserName}`)
             .toBe(`Select page ${FSI}1${PDI}`);
         })
@@ -472,6 +495,12 @@ describe("PDF Thumbnail View", () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
           await page.click("#viewsManagerToggleButton");
+          await page.waitForSelector(
+            "#viewsManagerStatusActionButton:not(:disabled)",
+            {
+              visible: true,
+            }
+          );
 
           await waitForThumbnailVisible(page, 1);
 
@@ -481,10 +510,9 @@ describe("PDF Thumbnail View", () => {
           await kbFocusNext(page);
 
           // Verify we're on the first thumbnail
-          await page.waitForSelector(
-            `#thumbnailsView .thumbnailImageContainer[data-l10n-args='{"page":1}']:focus`,
-            { visible: true }
-          );
+          await page.waitForSelector(`${getThumbnailSelector(1)}:focus`, {
+            visible: true,
+          });
 
           // Tab to checkbox
           await kbFocusNext(page);
@@ -500,6 +528,12 @@ describe("PDF Thumbnail View", () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
           await page.click("#viewsManagerToggleButton");
+          await page.waitForSelector(
+            "#viewsManagerStatusActionButton:not(:disabled)",
+            {
+              visible: true,
+            }
+          );
 
           await waitForThumbnailVisible(page, 1);
           await waitForThumbnailVisible(page, 2);
