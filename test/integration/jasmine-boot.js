@@ -53,6 +53,9 @@ async function runTests(results) {
     jasmineStarted(suiteInfo) {},
     specDone(result) {
       // Report on the result of individual tests.
+      if (result.status === "excluded") {
+        return;
+      }
       ++results.runs;
       if (result.failedExpectations.length > 0) {
         ++results.failures;
