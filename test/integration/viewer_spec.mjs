@@ -22,6 +22,7 @@ import {
   loadAndWait,
   scrollIntoView,
   showViewsManager,
+  waitAndClick,
   waitForPageChanging,
   waitForPageRendered,
 } from "./test_utils.mjs";
@@ -1523,6 +1524,76 @@ describe("PDF viewer", () => {
                 .length
           );
           expect(otherHiddenCount).withContext(`In ${browserName}`).toBe(0);
+        })
+      );
+    });
+  });
+
+  describe("Find current outline item scrolls into view (PR 20742)", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "freeculture.pdf",
+        ".textLayer .endOfContent",
+        null,
+        null,
+        null,
+        { width: 1280, height: 600 }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("must scroll the selected outline item into the visible sidebar area", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          // Open the sidebar.
+          await showViewsManager(page);
+
+          // Switch to outline view.
+          await page.click("#viewsManagerSelectorButton");
+          await waitAndClick(page, "#outlinesViewMenu");
+
+          // Wait for the outline tree to render.
+          await page.waitForSelector("#outlinesView .treeItem", {
+            visible: true,
+          });
+
+          await page.evaluate(() => {
+            // Expand all outline items.
+            document
+              .querySelectorAll(
+                "#outlinesView .treeItemToggler.treeItemsHidden"
+              )
+              .forEach(t => t.classList.remove("treeItemsHidden"));
+          });
+
+          // Navigate to page 310, which maps to a nested outline item that
+          // is below the visible sidebar area after its parent is expanded.
+          await page.evaluate(() => {
+            window.PDFViewerApplication.page = 310;
+          });
+          await page.waitForFunction(
+            () => window.PDFViewerApplication.page === 310
+          );
+          await page.waitForSelector(
+            ".page[data-page-number='310'] .textLayer .endOfContent"
+          );
+
+          await waitAndClick(
+            page,
+            "#viewsManagerCurrentOutlineButton:not(:disabled)"
+          );
+
+          // Wait for an outline item to receive the "selected" class.
+          const item = await page.waitForSelector("#outlinesView .selected", {
+            visible: true,
+          });
+          const isVisible = await item.isIntersectingViewport();
+          expect(isVisible).withContext(`In ${browserName}`).toBeTrue();
         })
       );
     });
