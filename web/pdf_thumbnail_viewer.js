@@ -193,6 +193,12 @@ class PDFThumbnailViewer {
     this.#undoButton = undoBar?.viewsManagerStatusUndoButton || null;
     this.#undoCloseButton = undoBar?.viewsManagerStatusUndoCloseButton || null;
 
+    PDFThumbnailView.setThumbnailBaseWidth(
+      parseFloat(
+        getComputedStyle(container).getPropertyValue("--thumbnail-width")
+      ) || 126
+    );
+
     // TODO: uncomment when the "add file" feature is implemented.
     // this.#addFileButton = addFileButton;
 

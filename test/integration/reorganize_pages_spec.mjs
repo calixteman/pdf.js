@@ -142,7 +142,13 @@ describe("Reorganize Pages View", () => {
         "page_with_number.pdf",
         "#viewsManagerToggleButton",
         "page-fit",
-        null,
+        {
+          appSetup: () => {
+            document
+              .getElementById("thumbnailsView")
+              .style.setProperty("--thumbnail-width", "26px");
+          },
+        },
         { enableSplitMerge: true }
       );
     });

@@ -31,7 +31,6 @@ import { AppOptions } from "./app_options.js";
 
 const DRAW_UPSCALE_FACTOR = 2; // See comment in `PDFThumbnailView.draw` below.
 const MAX_NUM_SCALING_STEPS = 3;
-const THUMBNAIL_WIDTH = 126; // px
 
 /**
  * @typedef {Object} PDFThumbnailViewOptions
@@ -79,6 +78,8 @@ class TempImageFactory {
 
 class PDFThumbnailView extends RenderableView {
   #renderingState = RenderingStates.INITIAL;
+
+  static #baseWidth = 0;
 
   /**
    * @param {PDFThumbnailViewOptions} options
@@ -150,6 +151,10 @@ class PDFThumbnailView extends RenderableView {
     this.#updateDims();
 
     container.append(thumbnailContainer);
+  }
+
+  static setThumbnailBaseWidth(width) {
+    this.#baseWidth ||= width;
   }
 
   clone(container, id) {
@@ -240,7 +245,7 @@ class PDFThumbnailView extends RenderableView {
     const { width, height } = this.viewport;
     const ratio = width / height;
 
-    const canvasWidth = (this.canvasWidth = THUMBNAIL_WIDTH);
+    const canvasWidth = (this.canvasWidth = PDFThumbnailView.#baseWidth);
     const canvasHeight = (this.canvasHeight = (canvasWidth / ratio) | 0);
     this.scale = canvasWidth / width;
 
