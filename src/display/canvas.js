@@ -2637,6 +2637,31 @@ class CanvasGraphics {
       warn("Knockout groups not supported.");
     }
 
+    // Simple group optimization: skip the intermediate canvas when the group
+    // has no smask and the parent context composites normally. Source-over is
+    // associative, so the isolated group result is identical to drawing
+    // directly on the parent canvas in that case.
+    if (
+      !group.smask &&
+      currentCtx.globalAlpha === 1 &&
+      currentCtx.globalCompositeOperation === "source-over"
+    ) {
+      if (group.bbox) {
+        let clip = new Path2D();
+        const [x0, y0, x1, y1] = group.bbox;
+        clip.rect(x0, y0, x1 - x0, y1 - y0);
+        if (group.matrix) {
+          const path = new Path2D();
+          path.addPath(clip, new DOMMatrix(group.matrix));
+          clip = path;
+        }
+        currentCtx.clip(clip);
+      }
+      this.groupStack.push(null); // null = no intermediate canvas
+      this.groupLevel++;
+      return;
+    }
+
     const currentTransform = getCurrentTransform(currentCtx);
     if (group.matrix) {
       currentCtx.transform(...group.matrix);
@@ -2754,8 +2779,15 @@ class CanvasGraphics {
       return;
     }
     this.groupLevel--;
-    const groupCtx = this.ctx;
+
     const ctx = this.groupStack.pop();
+    if (ctx === null) {
+      // Simple group: content was drawn directly on the parent canvas.
+      this.restore(opIdx);
+      return;
+    }
+
+    const groupCtx = this.ctx;
     this.ctx = ctx;
     // Turn off image smoothing to avoid sub pixel interpolation which can
     // look kind of blurry for some pdfs.
