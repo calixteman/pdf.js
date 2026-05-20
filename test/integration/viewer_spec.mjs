@@ -1396,6 +1396,60 @@ describe("PDF viewer", () => {
     });
   });
 
+  describe("Save/download disabled when supportsDownloading is false", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "tracemonkey.pdf",
+        ".textLayer .endOfContent",
+        null,
+        null,
+        { supportsDownloading: false }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("must hide the download buttons and skip save/download", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await page.waitForSelector("#downloadButton", { hidden: true });
+          await waitAndClick(page, "#secondaryToolbarToggleButton");
+          await page.waitForSelector("#secondaryDownload", { hidden: true });
+
+          const triggered = await page.evaluate(async () => {
+            const app = window.PDFViewerApplication;
+            const calls = [];
+            const saveDocument = app.pdfDocument.saveDocument.bind(
+              app.pdfDocument
+            );
+            app.pdfDocument.saveDocument = (...args) => {
+              calls.push("saveDocument");
+              return saveDocument(...args);
+            };
+
+            await app.download();
+            await app.save();
+            await app.downloadOrSave();
+            app.eventBus.dispatch("download", { source: null });
+            await new Promise(resolve => {
+              setTimeout(resolve, 0);
+            });
+
+            return { calls, downloadManager: app.downloadManager };
+          });
+          expect(triggered.downloadManager)
+            .withContext(`In ${browserName}`)
+            .toBeNull();
+          expect(triggered.calls).withContext(`In ${browserName}`).toEqual([]);
+        })
+      );
+    });
+  });
+
   describe("Pinch-zoom", () => {
     let pages;
 

@@ -127,7 +127,7 @@ class PDFOutlineViewer extends BaseTreeViewer {
     if (attachment) {
       element.href = linkService.getAnchorUrl("");
       element.onclick = () => {
-        this.downloadManager.openOrDownloadData(
+        this.downloadManager?.openOrDownloadData(
           attachment.content,
           attachment.filename
         );

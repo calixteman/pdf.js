@@ -384,6 +384,7 @@ const PDFViewerApplication = {
         maxCanvasPixels: x => parseInt(x, 10),
         spreadModeOnLoad: x => parseInt(x, 10),
         supportsCaretBrowsingMode: x => x === "true",
+        supportsDownloading: x => x === "true",
         viewerCssTheme: x => parseInt(x, 10),
         forcePageColors: x => x === "true",
         pageColorsBackground: x => x,
@@ -433,7 +434,16 @@ const PDFViewerApplication = {
       ignoreDestinationZoom: AppOptions.get("ignoreDestinationZoom"),
     }));
 
-    const downloadManager = (this.downloadManager = new DownloadManager());
+    const supportsDownloading = AppOptions.get("supportsDownloading");
+    const downloadManager = (this.downloadManager = supportsDownloading
+      ? new DownloadManager()
+      : null);
+    if (appConfig.secondaryToolbar?.downloadButton) {
+      appConfig.secondaryToolbar.downloadButton.hidden = !supportsDownloading;
+    }
+    if (appConfig.toolbar?.download) {
+      appConfig.toolbar.download.hidden = !supportsDownloading;
+    }
 
     const findController = (this.findController = new PDFFindController({
       linkService,
@@ -1290,6 +1300,10 @@ const PDFViewerApplication = {
   },
 
   async download() {
+    if (!this.downloadManager) {
+      return;
+    }
+
     let data;
     try {
       data = await (this.pdfDocument
@@ -1302,6 +1316,10 @@ const PDFViewerApplication = {
   },
 
   async save() {
+    if (!this.downloadManager) {
+      return;
+    }
+
     if (this._saveInProgress) {
       return;
     }
@@ -1333,6 +1351,10 @@ const PDFViewerApplication = {
   },
 
   async downloadOrSave() {
+    if (!this.downloadManager) {
+      return;
+    }
+
     // In the Firefox case, this method MUST always trigger a download.
     // When the user is closing a modified and unsaved document, we display a
     // prompt asking for saving or not. In case they save, we must wait for
@@ -2413,6 +2435,9 @@ const PDFViewerApplication = {
 
   async onSavePages({ data: extractParams }) {
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING")) {
+      return;
+    }
+    if (!this.downloadManager) {
       return;
     }
     if (!this.pdfDocument) {
