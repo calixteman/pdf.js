@@ -136,10 +136,11 @@ class Autolinker {
   static #numericTLDRegex;
 
   static findLinks(text) {
-    // Regex can be tested and verified at https://regex101.com/r/rXoLiT/2.
+    // A URL body is a run of non-square-bracket characters that must end on a
+    // non-punctuation character (or `/`), so trailing punctuation like `.` or
+    // `,` is left out of the match.
     this.#regex ??=
-      // eslint-disable-next-line regexp/no-super-linear-backtracking
-      /\b(?:https?:\/\/|mailto:|www\.)(?:[\S--[\p{P}<>]]|\/|[\S--[\[\]]]+[\S--[\p{P}<>]])+|(?=\p{L})[\S--[@\p{Ps}\p{Pe}<>]]+@([\S--[[\p{P}--\-]<>]]+(?:\.[\S--[[\p{P}--\-]<>]]+)+)/gv;
+      /\b(?:https?:\/\/|mailto:|www\.)[\S--[\[\]]]*[\S--[[\p{P}--\/]<>]]|(?=\p{L})[\S--[@\p{Ps}\p{Pe}<>]]+@([\S--[[\p{P}--\-]<>]]+(?:\.[\S--[[\p{P}--\-]<>]]+)+)/gv;
 
     const [normalizedText, diffs] = normalize(text, { ignoreDashEOL: true });
     const matches = normalizedText.matchAll(this.#regex);
