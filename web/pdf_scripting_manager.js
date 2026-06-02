@@ -15,10 +15,10 @@
 
 /** @typedef {import("./event_utils").EventBus} EventBus */
 
+import { getUuid, shadow } from "pdfjs-lib";
 import { apiPageLayoutToViewerModes } from "./ui_utils.js";
 import { internalOpt } from "./internal_evt.js";
 import { RenderingStates } from "./renderable_view.js";
-import { shadow } from "pdfjs-lib";
 
 /**
  * @typedef {Object} PDFScriptingManagerOptions
@@ -45,11 +45,17 @@ class PDFScriptingManager {
 
   #externalServices = null;
 
+  #fieldIds = null;
+
   #pdfDocument = null;
 
   #pdfViewer = null;
 
+  #printing = false;
+
   #ready = false;
+
+  #runningOpenAction = "";
 
   #scripting = null;
 
@@ -104,6 +110,14 @@ class PDFScriptingManager {
     if (pdfDocument !== this.#pdfDocument) {
       return; // The document was closed while the data resolved.
     }
+    this.#fieldIds = new Set(
+      objects
+        ? Object.values(objects)
+            .flat()
+            .map(obj => obj?.id)
+            .filter(Boolean)
+        : undefined
+    );
     try {
       this.#scripting = this.#initScripting();
     } catch (error) {
@@ -172,6 +186,13 @@ class PDFScriptingManager {
       },
       evtOpts
     );
+    eventBus.on(
+      "afterprint",
+      () => {
+        this.#printing = false;
+      },
+      evtOpts
+    );
 
     try {
       const docProperties = await this.#docProperties(pdfDocument);
@@ -200,10 +221,16 @@ class PDFScriptingManager {
       return;
     }
 
-    await this.#scripting?.dispatchEventInSandbox({
-      id: "doc",
-      name: "Open",
-    });
+    this.#runningOpenAction = getUuid();
+    try {
+      await this.#scripting?.dispatchEventInSandbox({
+        id: "doc",
+        name: "Open",
+        nonce: this.#runningOpenAction,
+      });
+    } catch {
+      this.#runningOpenAction = "";
+    }
     await this.#dispatchPageOpen(
       this.#pdfViewer.currentPageNumber,
       /* initialize = */ true
@@ -248,7 +275,7 @@ class PDFScriptingManager {
       throw ex;
     }
 
-    await this.#willPrintCapability.promise;
+    await this.#willPrintCapability?.promise;
   }
 
   async dispatchDidPrint() {
@@ -316,8 +343,26 @@ class PDFScriptingManager {
           pdfViewer.currentPageNumber = value + 1;
           break;
         case "print":
-          await pdfViewer.pagesPromise;
-          this.#eventBus.dispatch("print", { source: this });
+          if (
+            this.#printing ||
+            (!this.#runningOpenAction &&
+              navigator.userActivation?.isActive !== true)
+          ) {
+            break;
+          }
+          this.#printing = true;
+          try {
+            await pdfViewer.pagesPromise;
+          } catch {
+            this.#printing = false;
+            break;
+          }
+          this.#eventBus.dispatch("print", {
+            source: this,
+            onPrintCancelled: () => {
+              this.#printing = false;
+            },
+          });
           break;
         case "println":
           console.log(value);
@@ -328,6 +373,12 @@ class PDFScriptingManager {
           }
           break;
         case "SaveAs":
+          if (
+            this.#runningOpenAction ||
+            navigator.userActivation?.isActive !== true
+          ) {
+            break;
+          }
           this.#eventBus.dispatch("download", { source: this });
           break;
         case "FirstPage":
@@ -356,6 +407,11 @@ class PDFScriptingManager {
           this.#willPrintCapability?.resolve();
           this.#willPrintCapability = null;
           break;
+        case "OpenFinished":
+          if (detail.nonce === this.#runningOpenAction) {
+            this.#runningOpenAction = "";
+          }
+          break;
       }
       return;
     }
@@ -368,8 +424,11 @@ class PDFScriptingManager {
 
     const ids = siblings ? [id, ...siblings] : [id];
     for (const elementId of ids) {
+      if (!this.#fieldIds?.has(elementId)) {
+        continue; // Ignore ids that don't match a known field object.
+      }
       const element = document.querySelector(
-        `[data-element-id="${elementId}"]`
+        `[data-element-id="${CSS.escape(elementId)}"]`
       );
       if (element) {
         element.dispatchEvent(new CustomEvent("updatefromsandbox", { detail }));
@@ -489,6 +548,9 @@ class PDFScriptingManager {
     this._pageOpenPending.clear();
     this._visitedPages.clear();
 
+    this.#fieldIds = null;
+    this.#printing = false;
+    this.#runningOpenAction = "";
     this.#scripting = null;
     this.#ready = false;
 
