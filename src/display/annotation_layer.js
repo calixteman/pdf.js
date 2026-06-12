@@ -158,6 +158,9 @@ class AnnotationElementFactory {
       case AnnotationType.FILEATTACHMENT:
         return new FileAttachmentAnnotationElement(parameters);
 
+      case AnnotationType.RICHMEDIA:
+        return new RichMediaAnnotationElement(parameters);
+
       default:
         return new AnnotationElement(parameters);
     }
@@ -3796,6 +3799,51 @@ class FileAttachmentAnnotationElement extends AnnotationElement {
     if (content) {
       this.downloadManager?.openOrDownloadData(content, filename);
     }
+  }
+}
+
+class RichMediaAnnotationElement extends AnnotationElement {
+  constructor(parameters) {
+    super(parameters, { isRenderable: true });
+  }
+
+  render() {
+    this.container.classList.add("richMediaAnnotation");
+
+    const { filename } = this.data.richMedia;
+
+    // The annotation's appearance (a poster image) is painted on the canvas;
+    // overlay a play button that loads the embedded media on demand.
+    const button = document.createElement("button");
+    button.className = "richMediaPlayButton";
+    button.type = "button";
+    button.title = filename;
+    button.setAttribute("aria-label", filename);
+    button.addEventListener("click", () => this.#load(button));
+
+    this.container.append(button);
+    return this.container;
+  }
+
+  async #load(button) {
+    const { fileId, filename, contentType } = this.data.richMedia;
+    const content = await this.linkService.getAttachmentContent?.(fileId);
+    if (!content) {
+      return;
+    }
+
+    const url = URL.createObjectURL(new Blob([content], { type: contentType }));
+    const isAudio = contentType.startsWith("audio/");
+    const media = document.createElement(isAudio ? "audio" : "video");
+    media.className = "richMediaContent";
+    media.src = url;
+    media.title = filename;
+    media.controls = true;
+    media.autoplay = true;
+    // Release the object URL once the browser no longer needs the source.
+    media.addEventListener("emptied", () => URL.revokeObjectURL(url));
+
+    button.replaceWith(media);
   }
 }
 

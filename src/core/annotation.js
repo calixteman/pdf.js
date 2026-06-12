@@ -286,6 +286,9 @@ class AnnotationFactory {
       case "FileAttachment":
         return new FileAttachmentAnnotation(parameters);
 
+      case "RichMedia":
+        return new RichMediaAnnotation(parameters);
+
       default:
         if (!collectFields) {
           if (!subtype) {
@@ -5263,6 +5266,105 @@ class FileAttachmentAnnotation extends MarkupAnnotation {
       typeof fillAlpha === "number" && fillAlpha >= 0 && fillAlpha <= 1
         ? fillAlpha
         : null;
+  }
+}
+
+// Map of common media file extensions to their MIME types, used to pick the
+// right `<video>`/`<audio>` element on the display side.
+const RICH_MEDIA_CONTENT_TYPES = new Map([
+  ["mp4", "video/mp4"],
+  ["m4v", "video/mp4"],
+  ["webm", "video/webm"],
+  ["ogv", "video/ogg"],
+  ["mov", "video/quicktime"],
+  ["mp3", "audio/mpeg"],
+  ["m4a", "audio/mp4"],
+  ["wav", "audio/wav"],
+  ["oga", "audio/ogg"],
+  ["ogg", "audio/ogg"],
+]);
+
+class RichMediaAnnotation extends Annotation {
+  constructor(params) {
+    super(params);
+
+    this.data.noHTML = false;
+
+    const { dict, xref, annotationGlobals } = params;
+    /** @type {{catalog?: Catalog}} */
+    const { catalog } = annotationGlobals.pdfManager.pdfDocument;
+
+    const content = dict.get("RichMediaContent");
+    if (!(content instanceof Dict)) {
+      return;
+    }
+
+    // Locate the primary media asset by walking
+    // `Configurations -> Instances -> Asset`, which is the embedded file
+    // (e.g. the mp4) that should be played.
+    let assetRef = null;
+    let assetDict = null;
+    const configurations = content.get("Configurations");
+    if (Array.isArray(configurations)) {
+      for (const configRef of configurations) {
+        const config = xref.fetchIfRef(configRef);
+        if (!(config instanceof Dict)) {
+          continue;
+        }
+        const instances = config.get("Instances");
+        if (!Array.isArray(instances)) {
+          continue;
+        }
+        for (const instanceRef of instances) {
+          const instance = xref.fetchIfRef(instanceRef);
+          if (!(instance instanceof Dict)) {
+            continue;
+          }
+          const rawAsset = instance.getRaw("Asset");
+          const asset = xref.fetchIfRef(rawAsset);
+          if (asset instanceof Dict) {
+            assetRef = rawAsset instanceof Ref ? rawAsset : null;
+            assetDict = asset;
+            break;
+          }
+        }
+        if (assetDict) {
+          break;
+        }
+      }
+    }
+
+    if (!(assetDict instanceof Dict)) {
+      warn("RichMedia annotation has no playable asset.");
+      return;
+    }
+
+    const file = new FileSpec(assetDict);
+    const { filename } = file.serializable;
+
+    // Register the asset's file-spec dictionary so the embedded media bytes can
+    // be fetched lazily through `getAttachmentContent`, mirroring how file
+    // attachments are handled.
+    let fileId =
+      assetRef instanceof Ref
+        ? catalog?.attachmentIdByRef.get(assetRef)
+        : undefined;
+    if (catalog && typeof fileId !== "string") {
+      const baseFileId = `annotation:${this.data.id}`;
+      fileId = baseFileId;
+
+      let i = 1;
+      while (catalog.attachmentDictById.has(fileId)) {
+        fileId = `${baseFileId}-${i++}`;
+      }
+      catalog.attachmentDictById.set(fileId, assetDict);
+    }
+
+    const ext = filename.split(".").pop().toLowerCase();
+    const contentType =
+      RICH_MEDIA_CONTENT_TYPES.get(ext) || "application/octet-stream";
+
+    this.data.richMedia = { fileId, filename, contentType };
   }
 }
 
