@@ -1081,3 +1081,50 @@ describe("Screen annotation (rendition)", () => {
     });
   });
 });
+
+describe("Sound annotation", () => {
+  describe("multimedia_annotations.pdf", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "multimedia_annotations.pdf",
+        getAnnotationSelector("7R")
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("must play the embedded sound when clicking the play button", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          const annotationSelector = getAnnotationSelector("7R");
+          const buttonSelector = `${annotationSelector} .mediaPlayButton`;
+          const audioSelector = `${annotationSelector} audio.mediaContent`;
+
+          await page.waitForSelector(buttonSelector, { visible: true });
+          await page.click(buttonSelector);
+
+          await page.waitForSelector(audioSelector, { visible: true });
+          await page.waitForFunction(
+            sel => {
+              const el = document.querySelector(sel);
+              return (
+                !!el &&
+                !el.error &&
+                el.src.startsWith("blob:") &&
+                el.readyState >= /* HAVE_METADATA = */ 1 &&
+                Number.isFinite(el.duration) &&
+                el.duration > 0
+              );
+            },
+            {},
+            audioSelector
+          );
+        })
+      );
+    });
+  });
+});
