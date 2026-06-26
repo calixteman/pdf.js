@@ -274,7 +274,7 @@ const defaultOptions = {
   },
   enableSignatureEditor: {
     /** @type {boolean} */
-    value: typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING"),
+    value: true, //typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING"),
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
   enableSplitMerge: {
