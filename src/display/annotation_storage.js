@@ -182,6 +182,7 @@ class AnnotationStorage {
       transfer = [];
     const context = Object.create(null);
     let hasBitmap = false;
+    const needsPDFdata = [];
 
     for (const [key, val] of this.#storage) {
       const serialized =
@@ -197,6 +198,9 @@ class AnnotationStorage {
 
         hash.update(`${key}:${JSON.stringify(serialized)}`);
         hasBitmap ||= !!serialized.bitmap;
+        if (serialized.pdfData) {
+          needsPDFdata.push({ key, data: serialized.pdfData });
+        }
       }
     }
 
@@ -211,7 +215,7 @@ class AnnotationStorage {
     }
 
     return map.size > 0
-      ? { map, hash: hash.hexdigest(), transfer }
+      ? { map, hash: hash.hexdigest(), transfer, needsPDFdata }
       : SerializableEmpty;
   }
 

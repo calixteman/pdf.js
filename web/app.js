@@ -60,7 +60,12 @@ import {
 } from "pdfjs-lib";
 import { AppOptions, OptionKind } from "./app_options.js";
 import { EventBus, FirefoxEventBus } from "./event_utils.js";
-import { ExternalServices, initCom, MLManager } from "web-external_services";
+import {
+  ExternalServices,
+  initCom,
+  MLManager,
+  PDFGenerator,
+} from "web-external_services";
 import {
   ImageAltTextSettings,
   NewAltTextManager,
@@ -174,6 +179,7 @@ const PDFViewerApplication = {
   url: "",
   baseUrl: "",
   mlManager: null,
+  pdfGenerator: null,
   _downloadUrl: "",
   _eventBusAC: null,
   _windowAC: null,
@@ -226,6 +232,7 @@ const PDFViewerApplication = {
       docStyle.setProperty("color-scheme", mode);
     }
 
+    this.pdfGenerator = new PDFGenerator();
     if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
       if (AppOptions.get("enableFakeMLManager")) {
         this.mlManager =
@@ -1358,7 +1365,7 @@ const PDFViewerApplication = {
     await this.pdfScriptingManager.dispatchWillSave();
 
     try {
-      const data = await this.pdfDocument.saveDocument();
+      const data = await this.pdfDocument.saveDocument(this.pdfGenerator);
       this.downloadManager.download(data, this._downloadUrl, this._docFilename);
     } catch (reason) {
       // When the PDF document isn't ready, fallback to a "regular" download.

@@ -969,12 +969,13 @@ class PDFDocumentProxy {
   }
 
   /**
+   * @param {PDFGenerator} pdfGenerator - The PDF generator to use.
    * @returns {Promise<Uint8Array<ArrayBuffer>>} A promise that is
    *   resolved with a {Uint8Array<ArrayBuffer>} containing the
    *   full data of the saved document.
    */
-  saveDocument() {
-    return this._transport.saveDocument();
+  saveDocument(pdfGenerator) {
+    return this._transport.saveDocument(pdfGenerator);
   }
 
   /**
@@ -2911,14 +2912,22 @@ class WorkerTransport {
     return this.messageHandler.sendWithPromise("GetData", null);
   }
 
-  saveDocument() {
+  async saveDocument(pdfGenerator) {
     if (this.annotationStorage.size <= 0) {
       warn(
         "saveDocument called while `annotationStorage` is empty, " +
           "please use the getData-method instead."
       );
     }
-    const { map, transfer } = this.annotationStorage.serializable;
+    const { map, transfer, needsPDFdata } = this.annotationStorage.serializable;
+    let pdfData = null;
+    if (needsPDFdata?.length > 0) {
+      pdfData = {
+        pdfBuffer: await pdfGenerator.generate(needsPDFdata),
+        keys: needsPDFdata.map(({ key }) => key),
+      };
+      transfer.push(pdfData.pdfBuffer.buffer);
+    }
 
     return this.messageHandler
       .sendWithPromise(
@@ -2927,6 +2936,7 @@ class WorkerTransport {
           isPureXfa: !!this._htmlForXfa,
           numPages: this._numPages,
           annotationStorage: map,
+          pdfData,
           filename: this.#fullReader?.filename ?? null,
         },
         transfer

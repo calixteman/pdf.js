@@ -368,7 +368,7 @@ class Page {
     await Promise.all(promises);
   }
 
-  async saveNewAnnotations(handler, task, annotations, imagePromises, changes) {
+  async saveNewAnnotations(handler, task, annotations, imagePromises, changes, extractedPDFData) {
     if (this.xfaFactory) {
       throw new Error("XFA: Cannot save new annotations.");
     }

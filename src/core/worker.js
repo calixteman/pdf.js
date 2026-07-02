@@ -693,7 +693,13 @@ class WorkerMessageHandler {
 
     handler.on(
       "SaveDocument",
-      async function ({ isPureXfa, numPages, annotationStorage, filename }) {
+      async function ({
+        isPureXfa,
+        numPages,
+        annotationStorage,
+        pdfData,
+        filename,
+      }) {
         const globalPromises = [
           pdfManager.requestLoadedStream(),
           pdfManager.ensureCatalog("acroForm"),
@@ -705,9 +711,6 @@ class WorkerMessageHandler {
         const changes = new RefSetCache();
         const promises = [];
 
-        const newAnnotationsByPage = !isPureXfa
-          ? getNewAnnotationsMap(annotationStorage)
-          : null;
         const [
           stream,
           acroForm,
@@ -716,6 +719,70 @@ class WorkerMessageHandler {
           xref,
           _structTreeRoot,
         ] = await Promise.all(globalPromises);
+
+        let extractedPDFData = null;
+        if (pdfData) {
+          const manager = new LocalPdfManager({
+            source: pdfData.pdfBuffer,
+            docId: `${docId}_pdfData_0`,
+            handler,
+            evaluatorOptions: Object.assign({}, pdfManager.evaluatorOptions),
+          });
+          let recoveryMode = false;
+          let isValid = true;
+          while (true) {
+            try {
+              await manager.requestLoadedStream();
+              await manager.ensureDoc("checkHeader");
+              await manager.ensureDoc("parseStartXRef");
+              await manager.ensureDoc("parse", [recoveryMode]);
+              break;
+            } catch (e) {
+              if (e instanceof XRefParseException) {
+                if (recoveryMode === false) {
+                  recoveryMode = true;
+                  continue;
+                } else {
+                  isValid = false;
+                  warn("pdfData: XRefParseException.");
+                }
+              } else if (e instanceof PasswordException) {
+                const task = new WorkerTask(
+                  `PasswordException: response ${e.code}`
+                );
+
+                startWorkerTask(task);
+              } else {
+                isValid = false;
+                warn("extractPages: invalid document.");
+              }
+              if (!isValid) {
+                break;
+              }
+            }
+          }
+          delete pdfData.pdfBuffer;
+          if (isValid) {
+            const editor = new PDFEditor();
+            pdfData.document = manager.pdfDocument;
+            const firstRef = xref.getNewTemporaryRef();
+            const { xref: newXref, data } = await editor.extractData(
+              pdfData,
+              firstRef.num
+            );
+            extractedPDFData = data;
+            changes.put(firstRef, { data: newXref[0] });
+            for (let i = 1, ii = newXref.length; i < ii; i++) {
+              const ref = xref.getNewTemporaryRef();
+              changes.put(ref, { data: newXref[i] });
+            }
+          }
+        }
+
+        const newAnnotationsByPage = !isPureXfa
+          ? getNewAnnotationsMap(annotationStorage, extractedPDFData)
+          : null;
+
         const catalogRef = xref.trailer.getRaw("Root") || null;
         let structTreeRoot;
 

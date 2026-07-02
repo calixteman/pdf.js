@@ -666,7 +666,7 @@ function numberToString(value) {
   return value.toFixed(2);
 }
 
-function getNewAnnotationsMap(annotationStorage) {
+function getNewAnnotationsMap(annotationStorage, extractedPDFData) {
   if (!annotationStorage) {
     return null;
   }
@@ -680,6 +680,10 @@ function getNewAnnotationsMap(annotationStorage) {
     newAnnotationsByPage
       .getOrInsertComputed(value.pageIndex, makeArr)
       .push(value);
+    const extractedData = extractedPDFData?.get(key);
+    if (extractedData) {
+      value.extractedData = extractedData;
+    }
   }
   return newAnnotationsByPage.size > 0 ? newAnnotationsByPage : null;
 }

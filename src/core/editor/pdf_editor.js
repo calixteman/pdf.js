@@ -21,14 +21,9 @@
 /** @typedef {import("../../shared/message_handler.js").MessageHandler} MessageHandler */
 
 import {
-  deepCompare,
-  getInheritableProperty,
-  getModificationDate,
-  getNewAnnotationsMap,
-  numberToString,
-} from "../core_utils.js";
-import {
+  Cmd,
   Dict,
+  EOF,
   isDict,
   isName,
   Name,
@@ -36,16 +31,24 @@ import {
   RefSet,
   RefSetCache,
 } from "../primitives.js";
+import {
+  deepCompare,
+  getInheritableProperty,
+  getModificationDate,
+  getNewAnnotationsMap,
+  numberToString,
+} from "../core_utils.js";
 import { incrementalUpdate, writeValue } from "../writer.js";
 import { isArrayEqual, makeArr, stringToBytes } from "../../shared/util.js";
 import { NameTree, NumberTree } from "../name_number_tree.js";
+import { Stream, StringStream } from "../stream.js";
 import { stringToAsciiOrUTF16BE, stringToPDFString } from "../string_utils.js";
 import { AnnotationFactory } from "../annotation.js";
 import { BaseStream } from "../base_stream.js";
 import { createImage } from "./pdf_images.js";
 import { LETTER_SIZE_MEDIABOX } from "../document.js";
+import { Lexer } from "../parser.js";
 import { MurmurHash3_64 } from "../../shared/murmurhash3.js";
-import { StringStream } from "../stream.js";
 
 const MAX_LEAVES_PER_PAGES_NODE = 16;
 const MAX_IN_NAME_TREE_NODE = 64;
@@ -738,6 +741,132 @@ class PDFEditor {
     }
 
     return newNodeRef;
+  }
+
+  // Content streams produced by the browser printer carry marked-content
+  // operators (e.g. `/NonStruct <</MCID 0>> BDC ... EMC`) when tagged-PDF
+  // output is enabled. These are meaningless once the stream is reused as an
+  // annotation appearance, so strip them out. The stripping works on the
+  // decoded token bytes to preserve the exact numeric precision of the drawing
+  // operators. `source` provides the decoded content bytes and `dict` is the
+  // (already cloned) stream dict to attach to the result; returns null when the
+  // content can't be safely rewritten, so the caller keeps the original stream.
+  #stripMarkedContent(source, dict) {
+    const MARKED_CONTENT_OPS = new Set(["BDC", "BMC", "EMC", "MP", "DP"]);
+    const DELIMITERS = new Set(["[", "]", "<<", ">>", "{", "}"]);
+
+    source.reset();
+    const bytes = source.getBytes();
+    const lexer = new Lexer(new Stream(bytes));
+    const parts = [];
+    let cursor = 0;
+    let depth = 0;
+
+    try {
+      while (true) {
+        const obj = lexer.getObj();
+        if (obj === EOF) {
+          break;
+        }
+        if (!(obj instanceof Cmd)) {
+          continue;
+        }
+        const { cmd } = obj;
+        if (DELIMITERS.has(cmd)) {
+          if (cmd === "<<" || cmd === "[" || cmd === "{") {
+            depth++;
+          } else if (depth > 0) {
+            depth--;
+          }
+          continue;
+        }
+        if (depth !== 0) {
+          continue;
+        }
+        // A top-level operator marks the end of an instruction group made of
+        // the operator and its preceding operands.
+        if (cmd === "BI") {
+          // Inline image: its binary data can't be lexed safely, so bail out
+          // and keep the stream unchanged.
+          return null;
+        }
+        const opEnd =
+          lexer.currentChar < 0 ? bytes.length : lexer.stream.pos - 1;
+        if (!MARKED_CONTENT_OPS.has(cmd)) {
+          parts.push(bytes.subarray(cursor, opEnd));
+        }
+        cursor = opEnd;
+      }
+    } catch {
+      return null;
+    }
+    if (cursor < bytes.length) {
+      parts.push(bytes.subarray(cursor));
+    }
+
+    let total = 0;
+    for (const part of parts) {
+      total += part.length;
+    }
+    const stripped = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      stripped.set(part, offset);
+      offset += part.length;
+    }
+
+    dict.delete("Filter");
+    dict.delete("DecodeParms");
+    dict.delete("Length");
+    return new Stream(stripped, 0, stripped.length, dict);
+  }
+
+  async extractData({ keys, document }, firstRefNum) {
+    this.currentDocument = new DocumentData(document);
+    this.newRefCount = firstRefNum;
+    const { xref } = document;
+    const data = new Map();
+
+    for (let i = 0, ii = document.numPages; i < ii; i++) {
+      const { pageDict } = await document.getPage(i);
+      const resources = await this.#collectDependencies(
+        pageDict.getRaw("Resources"),
+        /* mustClone = */ true,
+        xref
+      );
+      const rawContents = pageDict.getRaw("Contents");
+      const contents = await this.#collectDependencies(
+        rawContents,
+        /* mustClone = */ true,
+        xref
+      );
+      let contentsStream = this.xref[contents.num];
+      // `this.xref[contents.num]` is a clone of the raw, still-encoded stream;
+      // strip marked-content from a freshly decoded copy of the source stream.
+      if (
+        contents instanceof Ref &&
+        rawContents instanceof Ref &&
+        contentsStream instanceof BaseStream
+      ) {
+        const source = await xref.fetchAsync(rawContents);
+        if (source instanceof BaseStream) {
+          const stripped = this.#stripMarkedContent(
+            source,
+            contentsStream.dict
+          );
+          if (stripped) {
+            contentsStream = stripped;
+            this.xref[contents.num] = stripped;
+          }
+        }
+      }
+      data.set(keys[i], {
+        resources,
+        contents,
+        contentsStream,
+      });
+    }
+    return { xref: this.xref.slice(firstRefNum), data };
   }
 
   /**

@@ -1381,7 +1381,6 @@ class Annotation {
       const appearanceDict = this.appearance.dict;
       const bbox = lookupRect(appearanceDict.getArray("BBox"), null);
       const matrix = lookupMatrix(appearanceDict.getArray("Matrix"), null);
-
       this.data.textPosition = this._transformPoint(
         firstPosition,
         bbox,
@@ -1886,7 +1885,8 @@ class MarkupAnnotation extends Annotation {
         data: ap,
       });
     } else {
-      annotationDict = this.createNewDict(annotation, xref, {});
+      const apRef = annotation.extractedData?.contents ?? null;
+      annotationDict = this.createNewDict(annotation, xref, { apRef });
     }
     if (Number.isInteger(annotation.parentTreeId)) {
       annotationDict.set("StructParent", annotation.parentTreeId);
@@ -4380,6 +4380,19 @@ class FreeTextAnnotation extends MarkupAnnotation {
   }
 
   static async createNewAppearanceStream(annotation, xref, params) {
+    if (annotation.extractedData) {
+      const { color, fontSize, rect, rotation, extractedData } = annotation;
+      const ap = extractedData.contentsStream;
+      const appearanceStreamDict = ap.dict;
+      appearanceStreamDict.set("FormType", 1);
+      appearanceStreamDict.setIfName("Subtype", "Form");
+      appearanceStreamDict.setIfName("Type", "XObject");
+      appearanceStreamDict.set("BBox", rect);
+      appearanceStreamDict.set("Resources", extractedData.resources);
+      appearanceStreamDict.set("Matrix", [1, 0, 0, 1, -rect[0], -rect[1]]);
+      return null;
+    }
+
     const { baseFontRef, evaluator, task } = params;
     const { color, fontSize, rect, rotation, value } = annotation;
     if (!color) {

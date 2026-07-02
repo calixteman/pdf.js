@@ -70,6 +70,10 @@ class BaseExternalServices {
     return null;
   }
 
+  printToPDF(data) {
+    throw new Error("Not implemented: printToPDF");
+  }
+
   updateEditorStates(data) {
     throw new Error("Not implemented: updateEditorStates");
   }
