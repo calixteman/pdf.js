@@ -204,4 +204,14 @@ if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
   };
 }
 
-export { ExternalServices, initCom, MLManager, Preferences };
+class PDFGenerator {
+  get supported() {
+    return false;
+  }
+
+  async generate(data) {
+    return null;
+  }
+}
+
+export { ExternalServices, initCom, MLManager, PDFGenerator, Preferences };

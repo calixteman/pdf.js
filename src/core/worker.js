@@ -685,7 +685,13 @@ class WorkerMessageHandler {
 
     handler.on(
       "SaveDocument",
-      async function ({ isPureXfa, numPages, annotationStorage, filename }) {
+      async function ({
+        isPureXfa,
+        numPages,
+        annotationStorage,
+        supportsPrintToPDF,
+        filename,
+      }) {
         const globalPromises = [
           pdfManager.requestLoadedStream(),
           pdfManager.ensureCatalog("acroForm"),
@@ -697,9 +703,6 @@ class WorkerMessageHandler {
         const changes = new RefMap();
         const promises = [];
 
-        const newAnnotationsByPage = !isPureXfa
-          ? getNewAnnotationsMap(annotationStorage)
-          : null;
         const [
           stream,
           acroForm,
@@ -708,6 +711,116 @@ class WorkerMessageHandler {
           xref,
           _structTreeRoot,
         ] = await Promise.all(globalPromises);
+
+        // Loads the PDF produced externally (by the browser's printer) and, for
+        // each entry, extracts the corresponding page's content stream together
+        // with its resources so they can be reused as an annotation appearance.
+        // The new stream/resources refs are registered in `changes`. Returns a
+        // Map(key -> extractedData), or null when the PDF couldn't be parsed.
+        const loadAndExtractPrintedPDF = async (pdfBuffer, entries) => {
+          const manager = new LocalPdfManager({
+            source: pdfBuffer,
+            docId: `${docId}_printToPDF`,
+            handler,
+            evaluatorOptions: Object.assign({}, pdfManager.evaluatorOptions),
+          });
+          let recoveryMode = false;
+          while (true) {
+            try {
+              await manager.requestLoadedStream();
+              await manager.ensureDoc("checkHeader");
+              await manager.ensureDoc("parseStartXRef");
+              await manager.ensureDoc("parse", [recoveryMode]);
+              break;
+            } catch (e) {
+              if (e instanceof XRefParseException && !recoveryMode) {
+                recoveryMode = true;
+                continue;
+              }
+              warn(`loadAndExtractPrintedPDF: invalid document "${e}".`);
+              return null;
+            }
+          }
+          const editor = new PDFEditor();
+          const firstRef = xref.getNewTemporaryRef();
+          const { xref: newXref, data } = await editor.extractData(
+            {
+              keys: entries.map(({ key }) => key),
+              rects: entries.map(({ data: { rect } }) => rect),
+              document: manager.pdfDocument,
+            },
+            firstRef.num
+          );
+          changes.put(firstRef, { data: newXref[0] });
+          for (let i = 1, ii = newXref.length; i < ii; i++) {
+            changes.put(xref.getNewTemporaryRef(), { data: newXref[i] });
+          }
+          return data;
+        };
+
+        // Some annotations can't be rendered by pdf.js and are drawn by the
+        // environment (the browser's printer) instead: editor annotations
+        // (e.g. FreeText), which carry their render data in `pdfData`, and text
+        // fields whose default font can't encode the value (which would
+        // otherwise fall back to /NeedAppearances). Both are rendered through a
+        // single PrintToPDF call so the resulting PDF shares/deduplicates its
+        // fonts, then each page's content + fonts are reused as the annotation
+        // appearance and attached to the matching annotationStorage entry.
+        if (!isPureXfa && supportsPrintToPDF && annotationStorage) {
+          const printEntries = [];
+          for (const [key, value] of annotationStorage) {
+            if (value?.pdfData) {
+              printEntries.push({ key, data: value.pdfData });
+            }
+          }
+          const collectPromises = [];
+          for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
+            collectPromises.push(
+              pdfManager.getPage(pageIndex).then(page => {
+                const task = new WorkerTask(
+                  `Collect print params: page ${pageIndex}`
+                );
+                startWorkerTask(task);
+                return page
+                  .collectUnrenderableFields(handler, task, annotationStorage)
+                  .finally(() => finishWorkerTask(task));
+              })
+            );
+          }
+          for (const list of await Promise.all(collectPromises)) {
+            printEntries.push(...list);
+          }
+
+          if (printEntries.length > 0) {
+            const pdfBuffer = await handler.sendWithPromise(
+              "PrintToPDF",
+              printEntries
+            );
+            if (pdfBuffer) {
+              const extracted = await loadAndExtractPrintedPDF(
+                pdfBuffer,
+                printEntries
+              );
+              // Attach the extracted appearance to each entry: editor
+              // annotations pick it up in `createNewAppearanceStream`, text
+              // fields in `save` (both read `extractedData` from their storage
+              // entry).
+              if (extracted) {
+                for (const [key, data] of extracted) {
+                  const entry = annotationStorage.get(key);
+                  if (entry) {
+                    entry.extractedData = data;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        const newAnnotationsByPage = !isPureXfa
+          ? getNewAnnotationsMap(annotationStorage)
+          : null;
+
         const catalogRef = xref.trailer.getRaw("Root") || null;
         let structTreeRoot;
 

@@ -867,6 +867,15 @@ class FreeTextEditor extends AnnotationEditor {
     }
 
     serialized.id = this.annotationElementId;
+    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
+      serialized.pdfData = {
+        color: Util.makeHexColor(...serialized.color),
+        fontSize: serialized.fontSize,
+        text: serialized.value,
+        rect: serialized.rect,
+        rotation: serialized.rotation,
+      };
+    }
 
     return serialized;
   }

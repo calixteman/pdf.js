@@ -21,14 +21,9 @@
 /** @typedef {import("../../shared/message_handler.js").MessageHandler} MessageHandler */
 
 import {
-  deepCompare,
-  getInheritableProperty,
-  getModificationDate,
-  getNewAnnotationsMap,
-  numberToString,
-} from "../core_utils.js";
-import {
+  Cmd,
   Dict,
+  EOF,
   isDict,
   isName,
   Name,
@@ -36,16 +31,24 @@ import {
   RefMap,
   RefSet,
 } from "../primitives.js";
+import {
+  deepCompare,
+  getInheritableProperty,
+  getModificationDate,
+  getNewAnnotationsMap,
+  numberToString,
+} from "../core_utils.js";
 import { incrementalUpdate, writeValue } from "../writer.js";
 import { isArrayEqual, makeArr, stringToBytes } from "../../shared/util.js";
 import { NameTree, NumberTree } from "../name_number_tree.js";
+import { Stream, StringStream } from "../stream.js";
 import { stringToAsciiOrUTF16BE, stringToPDFString } from "../string_utils.js";
 import { AnnotationFactory } from "../annotation.js";
 import { BaseStream } from "../base_stream.js";
 import { createImage } from "./pdf_images.js";
 import { LETTER_SIZE_MEDIABOX } from "../document.js";
+import { Lexer } from "../parser.js";
 import { MurmurHash3_64 } from "../../shared/murmurhash3.js";
-import { StringStream } from "../stream.js";
 
 const MAX_LEAVES_PER_PAGES_NODE = 16;
 const MAX_IN_NAME_TREE_NODE = 64;
@@ -767,6 +770,270 @@ class PDFEditor {
     }
 
     return newNodeRef;
+  }
+
+  #rewriteContentStream(source, dict, handle) {
+    const DELIMITERS = new Set(["[", "]", "<<", ">>", "{", "}"]);
+
+    source.reset();
+    const bytes = source.getBytes();
+    const lexer = new Lexer(new Stream(bytes));
+    const parts = [];
+    const operands = [];
+    let cursor = 0;
+    let depth = 0;
+
+    try {
+      while (true) {
+        const obj = lexer.getObj();
+        if (obj === EOF) {
+          break;
+        }
+        if (!(obj instanceof Cmd)) {
+          if (depth === 0) {
+            operands.push(obj);
+          }
+          continue;
+        }
+        const { cmd } = obj;
+        if (DELIMITERS.has(cmd)) {
+          if (cmd === "<<" || cmd === "[" || cmd === "{") {
+            depth++;
+          } else if (depth > 0) {
+            depth--;
+          }
+          continue;
+        }
+        if (depth !== 0) {
+          continue;
+        }
+        // A top-level operator marks the end of an instruction group made of
+        // the operator and its preceding operands.
+        const opEnd =
+          lexer.currentChar < 0 ? bytes.length : lexer.stream.pos - 1;
+        const raw = bytes.subarray(cursor, opEnd);
+        const replacement = handle(cmd, operands, raw);
+        if (replacement === undefined) {
+          parts.push(raw);
+        } else if (replacement !== null) {
+          parts.push(
+            typeof replacement === "string"
+              ? stringToBytes(replacement)
+              : replacement
+          );
+        }
+        cursor = opEnd;
+        operands.length = 0;
+      }
+    } catch {
+      return null;
+    }
+    if (cursor < bytes.length) {
+      parts.push(bytes.subarray(cursor));
+    }
+
+    let total = 0;
+    for (const part of parts) {
+      total += part.length;
+    }
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      result.set(part, offset);
+      offset += part.length;
+    }
+
+    dict.delete("Filter");
+    dict.delete("DecodeParms");
+    dict.delete("Length");
+    return new Stream(result, 0, result.length, dict);
+  }
+
+  // Content streams produced by the browser printer carry marked-content
+  // operators (e.g. `/NonStruct <</MCID 0>> BDC ... EMC`) when tagged-PDF
+  // output is enabled. These are meaningless once the stream is reused as an
+  // annotation appearance, so strip them out. `source` provides the decoded
+  // content bytes and `dict` is the (already cloned) stream dict to attach to
+  // the result; returns null when the content can't be safely rewritten, so
+  // the caller keeps the original stream.
+  #stripMarkedContent(source, dict) {
+    const MARKED_CONTENT_OPS = new Set(["BDC", "BMC", "EMC", "MP", "DP"]);
+    return this.#rewriteContentStream(source, dict, cmd =>
+      MARKED_CONTENT_OPS.has(cmd) ? null : undefined
+    );
+  }
+
+  // Bake every `cm` transform into the operand coordinates, dropping the `cm`
+  // operators, so the content draws upright under an identity CTM. The browser
+  // printer emits appearance content with a top-left flip (`1 0 0 -1 0 h cm` +
+  // a flipped text matrix); removing the transforms lets the content be used
+  // with a standard `[0 0 w h]` widget-appearance BBox (Acrobat mis-renders a
+  // non-origin BBox or the flip convention for text-field widgets). Path and
+  // text-matrix operands are transformed; other operators and their operands
+  // (e.g. `Td`, `Tj`) are copied verbatim to keep their exact numeric
+  // precision. Returns a new Stream, or null when the content can't be safely
+  // rewritten.
+  #flattenContent(source) {
+    const PATH_OPERANDS = new Map([
+      ["m", 2],
+      ["l", 2],
+      ["c", 6],
+      ["v", 4],
+      ["y", 4],
+      ["re", 4],
+    ]);
+    const mul = (a, b) => [
+      a[0] * b[0] + a[1] * b[2],
+      a[0] * b[1] + a[1] * b[3],
+      a[2] * b[0] + a[3] * b[2],
+      a[2] * b[1] + a[3] * b[3],
+      a[4] * b[0] + a[5] * b[2] + b[4],
+      a[4] * b[1] + a[5] * b[3] + b[5],
+    ];
+    const tx = (m, x, y) => m[0] * x + m[2] * y + m[4];
+    const ty = (m, x, y) => m[1] * x + m[3] * y + m[5];
+    // Return the last `count` operands as finite numbers, or null.
+    const takeNumbers = (ops, count) => {
+      if (ops.length < count) {
+        return null;
+      }
+      const values = ops.slice(-count);
+      for (const value of values) {
+        if (typeof value !== "number" || !isFinite(value)) {
+          return null;
+        }
+      }
+      return values;
+    };
+
+    let ctm = [1, 0, 0, 1, 0, 0];
+    const ctmStack = [];
+
+    return this.#rewriteContentStream(source, source.dict, (cmd, operands) => {
+      if (cmd === "cm") {
+        const m = takeNumbers(operands, 6);
+        if (m) {
+          ctm = mul(m, ctm);
+          return null; // drop the operator, its effect is now baked in
+        }
+        return undefined;
+      }
+      if (cmd === "Tm") {
+        const m = takeNumbers(operands, 6);
+        if (m) {
+          const n = mul(m, ctm);
+          return `\n${n.map(numberToString).join(" ")} Tm`;
+        }
+        return undefined;
+      }
+      if (PATH_OPERANDS.has(cmd)) {
+        const nums = takeNumbers(operands, PATH_OPERANDS.get(cmd));
+        if (nums) {
+          let str;
+          if (cmd === "re") {
+            const [x, y, w, h] = nums;
+            const x0 = tx(ctm, x, y),
+              y0 = ty(ctm, x, y),
+              x1 = tx(ctm, x + w, y + h),
+              y1 = ty(ctm, x + w, y + h);
+            str =
+              `${numberToString(Math.min(x0, x1))} ` +
+              `${numberToString(Math.min(y0, y1))} ` +
+              `${numberToString(Math.abs(x1 - x0))} ` +
+              `${numberToString(Math.abs(y1 - y0))} re`;
+          } else {
+            const coords = [];
+            for (let j = 0; j < nums.length; j += 2) {
+              coords.push(
+                numberToString(tx(ctm, nums[j], nums[j + 1])),
+                numberToString(ty(ctm, nums[j], nums[j + 1]))
+              );
+            }
+            str = `${coords.join(" ")} ${cmd}`;
+          }
+          return `\n${str}`;
+        }
+        return undefined;
+      }
+      if (cmd === "q") {
+        ctmStack.push(ctm.slice());
+      } else if (cmd === "Q" && ctmStack.length) {
+        ctm = ctmStack.pop();
+      }
+      return undefined;
+    });
+  }
+
+  async extractData({ keys, rects, document }, firstRefNum) {
+    this.currentDocument = new DocumentData(document);
+    this.newRefCount = firstRefNum;
+    const { xref } = document;
+    const data = new Map();
+
+    for (let i = 0, ii = document.numPages; i < ii; i++) {
+      const { pageDict } = await document.getPage(i);
+      const resources = await this.#collectDependencies(
+        pageDict.getRaw("Resources"),
+        /* mustClone = */ true,
+        xref
+      );
+      const rawContents = pageDict.getRaw("Contents");
+      const contents = await this.#collectDependencies(
+        rawContents,
+        /* mustClone = */ true,
+        xref
+      );
+      let contentsStream = this.xref[contents.num];
+      // `this.xref[contents.num]` is a clone of the raw, still-encoded stream;
+      // strip marked-content from a freshly decoded copy of the source stream.
+      if (
+        contents instanceof Ref &&
+        rawContents instanceof Ref &&
+        contentsStream instanceof BaseStream
+      ) {
+        const source = await xref.fetchAsync(rawContents);
+        if (source instanceof BaseStream) {
+          const stripped = this.#stripMarkedContent(
+            source,
+            contentsStream.dict
+          );
+          if (stripped) {
+            contentsStream = stripped;
+            this.xref[contents.num] = stripped;
+          }
+        }
+      }
+      // When a target rectangle is provided (form-field appearances), turn the
+      // extracted page content into a ready-to-use appearance XObject with a
+      // standard `[0 0 w h]` BBox. The browser printer draws each field into a
+      // field-sized box anchored at the page origin, so the content is already
+      // in form-local coordinates and flattening just makes it upright. This is
+      // the convention viewers expect for a widget appearance; a non-origin
+      // BBox or the flip convention makes some viewers (e.g. Acrobat)
+      // mis-render it.
+      const rect = rects?.[i];
+      if (rect && contentsStream instanceof BaseStream) {
+        const [x0, y0, x1, y1] = rect;
+        const appearance = contentsStream.dict.has("Filter")
+          ? contentsStream
+          : (this.#flattenContent(contentsStream) ?? contentsStream);
+        const { dict } = appearance;
+        dict.set("FormType", 1);
+        dict.setIfName("Subtype", "Form");
+        dict.setIfName("Type", "XObject");
+        dict.set("Resources", resources);
+        dict.set("BBox", [0, 0, x1 - x0, y1 - y0]);
+        dict.delete("Matrix");
+        contentsStream = appearance;
+        this.xref[contents.num] = appearance;
+      }
+      data.set(keys[i], {
+        resources,
+        contents,
+        contentsStream,
+      });
+    }
+    return { xref: this.xref.slice(firstRefNum), data };
   }
 
   /**

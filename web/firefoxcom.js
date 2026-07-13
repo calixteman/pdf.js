@@ -671,6 +671,17 @@ class SignatureVerifier {
   }
 }
 
+class PDFGenerator {
+  get supported() {
+    return true;
+  }
+
+  async generate(data) {
+    const buffer = await FirefoxCom.requestAsync("printToPDF", data);
+    return new Uint8Array(buffer);
+  }
+}
+
 class ExternalServices extends BaseExternalServices {
   updateFindControlState(data) {
     FirefoxCom.request("updateFindControlState", data);
@@ -778,4 +789,11 @@ class ExternalServices extends BaseExternalServices {
   }
 }
 
-export { DownloadManager, ExternalServices, initCom, MLManager, Preferences };
+export {
+  DownloadManager,
+  ExternalServices,
+  initCom,
+  MLManager,
+  PDFGenerator,
+  Preferences,
+};

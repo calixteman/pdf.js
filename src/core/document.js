@@ -437,6 +437,37 @@ class Page {
     return Promise.all(promises);
   }
 
+  // Collects, for each field whose value can't be rendered with its default
+  // font, the parameters needed to render it externally (see the "PrintToPDF"
+  // mechanism in the worker). Returns an array of `{ key, data }` entries.
+  async collectUnrenderableFields(handler, task, annotationStorage) {
+    const partialEvaluator = this._createPartialEvaluator(handler);
+    const annotations = await this._parsedAnnotations;
+
+    const params = [];
+    for (const annotation of annotations) {
+      if (!annotation.getPrintParamsIfUnrenderable) {
+        continue;
+      }
+      try {
+        const printParams = await annotation.getPrintParamsIfUnrenderable(
+          partialEvaluator,
+          task,
+          annotationStorage
+        );
+        if (printParams) {
+          params.push(printParams);
+        }
+      } catch (reason) {
+        warn(
+          "collectUnrenderableFields - ignoring annotation during " +
+            `"${task.name}" task: "${reason}".`
+        );
+      }
+    }
+    return params;
+  }
+
   async loadResources(keys) {
     // TODO: add async `#getInheritableProperty` and remove this.
     await (this.#resourcesPromise ??= this.pdfManager.ensure(

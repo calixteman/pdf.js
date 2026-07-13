@@ -978,12 +978,16 @@ class PDFDocumentProxy {
   }
 
   /**
+   * @param {Object} [pdfGenerator] - An optional generator, exposing a
+   *   `generate(data)` method and a `supported` flag, used to render content
+   *   that pdf.js can't render itself (e.g. glyphs unsupported by the default
+   *   font) into a PDF whose appearance is then embedded when saving.
    * @returns {Promise<Uint8Array<ArrayBuffer>>} A promise that is
    *   resolved with a {Uint8Array<ArrayBuffer>} containing the
    *   full data of the saved document.
    */
-  saveDocument() {
-    return this._transport.saveDocument();
+  saveDocument(pdfGenerator) {
+    return this._transport.saveDocument(pdfGenerator);
   }
 
   /**
@@ -2430,6 +2434,8 @@ class WorkerTransport {
 
   #passwordCapability = null;
 
+  #pdfGenerator = null;
+
   constructor(
     messageHandler,
     loadingTask,
@@ -2935,19 +2941,30 @@ class WorkerTransport {
         return this.binaryDataFactory.fetch(data);
       });
     }
+
+    // While saving, the worker can ask the environment to render field/editor
+    // content it can't render itself (e.g. glyphs unsupported by the default
+    // font) into a PDF, then reuse its content stream + fonts as the
+    // appearance. Returns a `Uint8Array`, or null when unsupported.
+    messageHandler.on("PrintToPDF", data => this.#pdfGenerator?.generate(data));
   }
 
   getData() {
     return this.messageHandler.sendWithPromise("GetData", null);
   }
 
-  saveDocument() {
+  async saveDocument(pdfGenerator) {
     if (this.annotationStorage.size <= 0) {
       warn(
         "saveDocument called while `annotationStorage` is empty, " +
           "please use the getData-method instead."
       );
     }
+    // Make the generator available to the "PrintToPDF" handler so the worker
+    // can render appearances it can't produce itself (editor annotations and
+    // text fields with unrenderable glyphs) through a single print request.
+    this.#pdfGenerator = pdfGenerator;
+
     const { map, transfer } = this.annotationStorage.serializable;
 
     return this.messageHandler
@@ -2957,6 +2974,7 @@ class WorkerTransport {
           isPureXfa: !!this._htmlForXfa,
           numPages: this._numPages,
           annotationStorage: map,
+          supportsPrintToPDF: !!pdfGenerator?.supported,
           filename: this.#fullReader?.filename ?? null,
         },
         transfer

@@ -25,6 +25,7 @@ import {
   assert,
   BASELINE_FACTOR,
   BBOX_INIT,
+  bytesToString,
   F32_BBOX_INIT,
   info,
   isArrayEqual,
@@ -1399,7 +1400,6 @@ class Annotation {
       const appearanceDict = this.appearance.dict;
       const bbox = lookupRect(appearanceDict.getArray("BBox"), null);
       const matrix = lookupMatrix(appearanceDict.getArray("Matrix"), null);
-
       this.data.textPosition = this._transformPoint(
         firstPosition,
         bbox,
@@ -1904,7 +1904,8 @@ class MarkupAnnotation extends Annotation {
         data: ap,
       });
     } else {
-      annotationDict = this.createNewDict(annotation, xref, {});
+      const apRef = annotation.extractedData?.contents ?? null;
+      annotationDict = this.createNewDict(annotation, xref, { apRef });
     }
     if (Number.isInteger(annotation.parentTreeId)) {
       annotationDict.set("StructParent", annotation.parentTreeId);
@@ -2290,8 +2291,15 @@ class WidgetAnnotation extends Annotation {
       rotation = this.rotation;
     }
 
+    // A field whose value can't be rendered with its default font gets a
+    // faithful appearance produced externally (see the "PrintToPDF" mechanism
+    // in the worker and `getPrintParamsIfUnrenderable`); it's built from the
+    // extracted content stream + resources below.
+    const extractedData = storageEntry?.extractedData ?? null;
     let appearance = null;
-    if (!this._needAppearances) {
+    if (extractedData) {
+      // The appearance is built from `extractedData`; nothing to compute here.
+    } else if (!this._needAppearances) {
       appearance = await this._getAppearance(
         evaluator,
         task,
@@ -2328,7 +2336,7 @@ class WidgetAnnotation extends Annotation {
     }
     if (flags !== undefined) {
       dict.set("F", flags);
-      if (appearance === null && !needAppearances) {
+      if (appearance === null && !needAppearances && !extractedData) {
         const ap = originalDict.getRaw("AP");
         if (ap) {
           dict.set("AP", ap);
@@ -2361,7 +2369,31 @@ class WidgetAnnotation extends Annotation {
       xfa,
       needAppearances,
     });
-    if (appearance !== null) {
+    if (extractedData) {
+      // The appearance XObject — flattened into upright, form-local content
+      // with a standard `[0 0 w h]` BBox and its own fonts — was fully prepared
+      // during extraction (see `PDFEditor.extractData`), and its content object
+      // is already emitted (via the extracted xref slice). Point /AP /N at it.
+      const AP = new Dict(xref);
+      dict.set("AP", AP);
+      AP.set("N", extractedData.contents);
+
+      // A text-field widget appearance must be wrapped in the variable-text
+      // marker `/Tx BMC … EMC`, otherwise Acrobat truncates multi-run content
+      // (e.g. mixed scripts drawn as separate runs — only the first is shown).
+      // FreeText doesn't need this, so it's done here rather than in the shared
+      // extraction. Skip it when the content isn't decoded (raw fallback).
+      const stream = extractedData.contentsStream;
+      if (!stream.dict.has("Filter")) {
+        stream.reset();
+        const wrapped = `/Tx BMC\n${bytesToString(stream.getBytes())}\nEMC`;
+        changes.put(extractedData.contents, {
+          data: new StringStream(wrapped, stream.dict),
+          xfa: null,
+          needAppearances: false,
+        });
+      }
+    } else if (appearance !== null) {
       const newRef = xref.getNewTemporaryRef();
       const AP = new Dict(xref);
       dict.set("AP", AP);
@@ -2393,6 +2425,108 @@ class WidgetAnnotation extends Annotation {
     }
 
     dict.set("M", `D:${getModificationDate()}`);
+  }
+
+  // When the field value contains glyphs that the default font can't encode
+  // (e.g. emoji or complex scripts), pdf.js can't produce a faithful
+  // appearance on save and currently relies on the /NeedAppearances flag.
+  // Instead, return the parameters needed to render the value externally (see
+  // the "PrintToPDF" mechanism); the resulting appearance is then embedded in
+  // the saved document. Returns null when the default font *can* encode the
+  // value (the normal appearance is kept) or when there's nothing to render.
+  // Scoped to text fields; other widget kinds keep their existing behavior.
+  async getPrintParamsIfUnrenderable(evaluator, task, annotationStorage) {
+    if (!(this instanceof TextWidgetAnnotation) || this.data.password) {
+      return null;
+    }
+
+    const storageEntry = annotationStorage?.get(this.data.id);
+    let value, rotation;
+    if (storageEntry) {
+      value = storageEntry.formattedValue || storageEntry.value;
+      rotation = storageEntry.rotation;
+    }
+    if (rotation === undefined && value === undefined) {
+      // The field hasn't been modified, so keep the existing appearance.
+      return null;
+    }
+    if (value === undefined) {
+      value = this.data.fieldValue;
+    }
+    if (Array.isArray(value) && value.length === 1) {
+      value = value[0];
+    }
+    if (typeof value !== "string") {
+      return null;
+    }
+    value = value.trimEnd();
+    if (value === "") {
+      return null;
+    }
+    if (rotation === undefined) {
+      rotation = this.rotation;
+    }
+
+    // Mirror the normalization done in `_getAppearance`.
+    let lineCount = -1;
+    let lines;
+    if (this.data.multiLine) {
+      lines = value.split(/\r\n?|\n/).map(line => line.normalize("NFC"));
+      lineCount = lines.length;
+    } else {
+      lines = [value.replace(/\r\n?|\n/, "").normalize("NFC")];
+    }
+
+    if (!this._defaultAppearance) {
+      this.data.defaultAppearanceData = parseDefaultAppearance(
+        (this._defaultAppearance = "/Helvetica 0 Tf 0 g")
+      );
+    }
+
+    const font = await WidgetAnnotation._getFontData(
+      evaluator,
+      task,
+      this.data.defaultAppearanceData,
+      this._fieldResources.mergedResources
+    );
+
+    let encodingError = false;
+    for (const line of lines) {
+      if (font.encodeString(line).length > 1) {
+        encodingError = true;
+        break;
+      }
+    }
+    if (!encodingError) {
+      // The default font can encode the value: the normal appearance is used.
+      return null;
+    }
+
+    const defaultPadding = 1;
+    const defaultHPadding = 2;
+    let { width: totalWidth, height: totalHeight } = this;
+    if (rotation === 90 || rotation === 270) {
+      [totalWidth, totalHeight] = [totalHeight, totalWidth];
+    }
+    const [, fontSize] = this._computeFontSize(
+      totalHeight - 2 * defaultPadding,
+      totalWidth - 2 * defaultHPadding,
+      value,
+      font,
+      lineCount
+    );
+
+    const { fontColor } = this.data.defaultAppearanceData;
+    return {
+      key: this.data.id,
+      data: {
+        color: Util.makeHexColor(fontColor[0], fontColor[1], fontColor[2]),
+        fontSize,
+        text: lines.join("\n"),
+        rect: this.data.rect,
+        rotation,
+      },
+    };
   }
 
   async _getAppearance(evaluator, task, intent, annotationStorage) {
@@ -4404,6 +4538,14 @@ class FreeTextAnnotation extends MarkupAnnotation {
   }
 
   static async createNewAppearanceStream(annotation, xref, params) {
+    if (annotation.extractedData) {
+      // The appearance XObject (flattened, upright, form-local content with a
+      // `[0 0 w h]` BBox and its fonts) was fully prepared during extraction
+      // (see `PDFEditor.extractData`); it's referenced through
+      // `extractedData.contents` (see `MarkupAnnotation.createNewDict`).
+      return null;
+    }
+
     const { baseFontRef, evaluator, task } = params;
     const { color, fontSize, rect, rotation, value } = annotation;
     if (!color) {
