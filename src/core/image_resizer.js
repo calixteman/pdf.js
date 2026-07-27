@@ -73,7 +73,7 @@ class ImageResizer {
     }
 
     // We try as much as possible to avoid to compute the max area.
-    if (this._areGoodDims(width, height)) {
+    if (true) {//this._areGoodDims(width, height)) {
       this.#goodSquareLength = Math.max(
         this.#goodSquareLength,
         Math.floor(Math.sqrt(width * height))
@@ -174,23 +174,7 @@ class ImageResizer {
   }
 
   static _guessMax(start, end, tolerance, defaultHeight) {
-    // We don't really need to have exact values.
-    // When we're here then we're in a corner case: we've a very large image.
-    // So we could potentially downscale an image which fits in the canvas,
-    // it's maybe a pity in term of perfs but we'll reduce the memory use.
-    // The tolerance is the acceptable error we can make on the limit we want.
-    // On Chrome, when the tolerance 0 then it can take ~5s to compute the max
-    // area... and having a tolerance of 128 divides the time by 2.
-    while (start + tolerance + 1 < end) {
-      const middle = Math.floor((start + end) / 2);
-      const height = defaultHeight || middle;
-      if (this._areGoodDims(middle, height)) {
-        start = middle;
-      } else {
-        end = middle;
-      }
-    }
-    return start;
+    return 32768;
   }
 
   static async createImage(imgData, isMask = false) {
