@@ -102,7 +102,7 @@ describe("api", function () {
     return count;
   }
 
-  function assemblePdf(objects) {
+  function assemblePdf(objects, trailerEntries = "") {
     let pdf = "%PDF-1.7\n";
     const offsets = [];
     for (const obj of objects) {
@@ -116,7 +116,7 @@ describe("api", function () {
       pdf += `${offset.toString().padStart(10, "0")} 00000 n \n`;
     }
     pdf +=
-      `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n` +
+      `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R ${trailerEntries}>>\n` +
       `startxref\n${xrefOffset}\n%%EOF\n`;
     return stringToBytes(pdf);
   }
@@ -7083,6 +7083,432 @@ small scripts as well as for`);
 
       await loadingTask.destroy();
     }
+
+    describe("extract pages with catalog entries (issue 22125)", function () {
+      function buildCatalogPdf(lang = "en-US") {
+        const metadata =
+          '<x:xmpmeta xmlns:x="adobe:ns:meta/">' +
+          '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
+          '<rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/">' +
+          `<dc:title>Catalog test (${lang})</dc:title>` +
+          "</rdf:Description></rdf:RDF></x:xmpmeta>";
+        return assemblePdf([
+          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Metadata 5 0 R " +
+            "/Lang 10 0 R /MarkInfo 6 0 R /ViewerPreferences 7 0 R " +
+            "/PageMode /UseOC /PageLayout /TwoPageLeft " +
+            "/OutputIntents [8 0 R] /StructTreeRoot 12 0 R " +
+            "/OCProperties << /OCGs [11 0 R] " +
+            "/D << /OFF [11 0 R] /Order [11 0 R] >> >> >>\nendobj\n",
+          "2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n",
+          "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] " +
+            "/Resources << /Properties << /MC0 11 0 R >> >> >>\nendobj\n",
+          "4 0 obj\n<< /Type /Page /Parent 2 0 R " +
+            "/MediaBox [0 0 200 200] >>\nendobj\n",
+          "5 0 obj\n<< /Type /Metadata /Subtype /XML " +
+            `/Length ${metadata.length} >>\nstream\n${metadata}\n` +
+            "endstream\nendobj\n",
+          "6 0 obj\n<< /Marked true /UserProperties false /Suspects true >>\nendobj\n",
+          "7 0 obj\n<< /DisplayDocTitle true /Direction /R2L " +
+            "/PrintPageRange [2 2] >>\nendobj\n",
+          "8 0 obj\n<< /Type /OutputIntent /S /GTS_PDFA1 " +
+            "/OutputConditionIdentifier (Test profile) " +
+            "/DestOutputProfile 9 0 R >>\nendobj\n",
+          "9 0 obj\n<< /N 3 /Length 12 >>\nstream\nTest profile\nendstream\nendobj\n",
+          `10 0 obj\n(${lang})\nendobj\n`,
+          "11 0 obj\n<< /Type /OCG /Name (Layer) >>\nendobj\n",
+          // Only the first page has a structure-tree entry.
+          "12 0 obj\n<< /Type /StructTreeRoot /K [13 0 R] >>\nendobj\n",
+          "13 0 obj\n<< /Type /StructElem /S /P /P 12 0 R /Pg 3 0 R /K 0 >>\nendobj\n",
+        ]);
+      }
+
+      async function checkCatalog(
+        pdfDoc,
+        {
+          context,
+          lang = "en-US",
+          isMerge = false,
+          isTagged = true,
+          printPageRange = null,
+        }
+      ) {
+        const { info, metadata } = await pdfDoc.getMetadata();
+        expect(info.Language).withContext(context).toEqual(lang);
+        // Keep source XMP only when not merging distinct PDFs.
+        if (isMerge) {
+          expect(metadata).withContext(context).toBeNull();
+        } else {
+          expect(metadata?.get("dc:title"))
+            .withContext(context)
+            .toEqual(`Catalog test (${lang})`);
+        }
+        // Keep one group per distinct source PDF.
+        const groupsCount = isMerge ? 2 : 1;
+        const optionalContentConfig = await pdfDoc.getOptionalContentConfig();
+        expect(
+          Array.from(optionalContentConfig, ([, { name, visible }]) => [
+            name,
+            visible,
+          ])
+        )
+          .withContext(context)
+          .toEqual(new Array(groupsCount).fill(["Layer", false]));
+        // Removing the only structure-tree entry also removes /MarkInfo.
+        expect(await pdfDoc.getMarkInfo())
+          .withContext(context)
+          .toEqual(
+            isTagged
+              ? new Map([
+                  ["Marked", true],
+                  ["UserProperties", false],
+                  ["Suspects", true],
+                ])
+              : null
+          );
+        // Remap the print preset to output pages.
+        const viewerPreferences = new Map([
+          ["DisplayDocTitle", true],
+          ["Direction", "R2L"],
+        ]);
+        if (printPageRange) {
+          viewerPreferences.set("PrintPageRange", printPageRange);
+        }
+        expect(await pdfDoc.getViewerPreferences())
+          .withContext(context)
+          .toEqual(viewerPreferences);
+        expect(await pdfDoc.getPageMode())
+          .withContext(context)
+          .toEqual("UseOC");
+        expect(await pdfDoc.getPageLayout())
+          .withContext(context)
+          .toEqual("TwoPageLeft");
+
+        // No public output-intent getter: check the serialized dependencies.
+        const data = await pdfDoc.getData();
+        expect(countMarker(data, "/OutputIntents"))
+          .withContext(context)
+          .toEqual(1);
+        expect(countMarker(data, "/Type /OutputIntent"))
+          .withContext(context)
+          .toEqual(1);
+        expect(countMarker(data, "/DestOutputProfile"))
+          .withContext(context)
+          .toEqual(1);
+        expect(countMarker(data, "Test profile"))
+          .withContext(context)
+          .toEqual(2);
+        // Page copies and the catalog must share the same OCG.
+        expect(countMarker(data, "/Type /OCG"))
+          .withContext(context)
+          .toEqual(groupsCount);
+      }
+
+      it("preserves catalog entries when deleting or reordering pages", async function () {
+        const loadingTask = getDocument({ data: buildCatalogPdf() });
+        const pdfDoc = await loadingTask.promise;
+
+        for (const [
+          context,
+          pageInfos,
+          expectedSizes,
+          printPageRange,
+          isTagged,
+        ] of [
+          [
+            "delete",
+            [{ document: null, excludePages: [1] }],
+            [100],
+            null,
+            true,
+          ],
+          // The preset covers the sole remaining page, so omit it.
+          [
+            "delete the tagged page",
+            [{ document: null, excludePages: [0] }],
+            [200],
+            null,
+            false,
+          ],
+          [
+            "reorder",
+            [{ document: null, pageIndices: [1, 0] }],
+            [200, 100],
+            [1, 1],
+            true,
+          ],
+          ["copy", [{ document: null }], [100, 200], [2, 2], true],
+          [
+            "duplicate",
+            [{ document: null }, { document: null }],
+            [100, 200, 100, 200],
+            [2, 2, 4, 4],
+            true,
+          ],
+          [
+            "interleave",
+            [
+              { document: null, pageIndices: [0, 2] },
+              { document: null, pageIndices: [1, 3] },
+            ],
+            [100, 100, 200, 200],
+            [3, 4],
+            true,
+          ],
+        ]) {
+          const data = await pdfDoc.extractPages(pageInfos);
+          const newLoadingTask = getDocument({ data });
+          const newPdfDoc = await newLoadingTask.promise;
+          expect(newPdfDoc.numPages)
+            .withContext(context)
+            .toEqual(expectedSizes.length);
+          for (let i = 0; i < expectedSizes.length; i++) {
+            const page = await newPdfDoc.getPage(i + 1);
+            expect(page.view)
+              .withContext(context)
+              .toEqual([0, 0, expectedSizes[i], expectedSizes[i]]);
+          }
+          await checkCatalog(newPdfDoc, { context, isTagged, printPageRange });
+          await newLoadingTask.destroy();
+        }
+
+        // Extraction must leave the source catalog unchanged.
+        await checkCatalog(pdfDoc, {
+          context: "source",
+          printPageRange: [2, 2],
+        });
+        await loadingTask.destroy();
+      });
+
+      it("preserves catalog entries from the first retained document when merging", async function () {
+        const loadingTask = getDocument({ data: buildCatalogPdf() });
+        const pdfDoc = await loadingTask.promise;
+
+        for (const [context, lang, expectedLang] of [
+          ["same language", "en-US", "en-US"],
+          // Drop catalog /Lang when source values differ.
+          ["different languages", "fr-FR", null],
+        ]) {
+          const data = await pdfDoc.extractPages([
+            { document: null, excludePages: [0, 1] },
+            { document: buildCatalogPdf(lang) },
+            { document: null, includePages: [0] },
+          ]);
+          const newLoadingTask = getDocument({ data });
+          const newPdfDoc = await newLoadingTask.promise;
+          expect(newPdfDoc.numPages).withContext(context).toEqual(3);
+          // Exclude page 1 from the preset; include the other source's page.
+          await checkCatalog(newPdfDoc, {
+            context,
+            lang: expectedLang,
+            isMerge: true,
+            printPageRange: [2, 3],
+          });
+          await newLoadingTask.destroy();
+        }
+        await loadingTask.destroy();
+      });
+
+      it("merges the optional content properties", async function () {
+        const loadingTask = getDocument({
+          data: assemblePdf([
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R " +
+              "/OCProperties << /OCGs [4 0 R 5 0 R] " +
+              "/D << /BaseState /OFF /ON [4 0 R] >> " +
+              "/Configs [<< /OFF [4 0 R] >>] >> >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R " +
+              "/MediaBox [0 0 100 100] >>\nendobj\n",
+            "4 0 obj\n<< /Type /OCG /Name (A1) >>\nendobj\n",
+            "5 0 obj\n<< /Type /OCG /Name (A2) >>\nendobj\n",
+          ]),
+        });
+        const pdfDoc = await loadingTask.promise;
+        const data = await pdfDoc.extractPages([
+          { document: null },
+          {
+            document: assemblePdf([
+              "1 0 obj\n<< /Type /Catalog /Pages 2 0 R " +
+                "/OCProperties << /OCGs [4 0 R] " +
+                "/D << /OFF [4 0 R] /Order [4 0 R] " +
+                "/Intent [/View /Design] >> >> >>\nendobj\n",
+              "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+              "3 0 obj\n<< /Type /Page /Parent 2 0 R " +
+                "/MediaBox [0 0 100 100] >>\nendobj\n",
+              "4 0 obj\n<< /Type /OCG /Name (B1) >>\nendobj\n",
+            ]),
+          },
+        ]);
+        await loadingTask.destroy();
+
+        // Use the default ON base state and omit alternate configurations.
+        expect(countMarker(data, "/BaseState")).toEqual(0);
+        expect(countMarker(data, "/Configs")).toEqual(0);
+        expect(countMarker(data, "/Intent [/View /Design]")).toEqual(1);
+
+        const newLoadingTask = getDocument({ data });
+        const newPdfDoc = await newLoadingTask.promise;
+        const optionalContentConfig =
+          await newPdfDoc.getOptionalContentConfig();
+        expect(
+          Array.from(optionalContentConfig, ([, { name, visible }]) => [
+            name,
+            visible,
+          ])
+        ).toEqual([
+          ["A1", true],
+          ["A2", false],
+          ["B1", false],
+        ]);
+        // List the first source's groups even though it has no /Order.
+        expect(
+          optionalContentConfig
+            .getOrder()
+            .map(id => optionalContentConfig.getGroup(id).name)
+        ).toEqual(["A1", "A2", "B1"]);
+        await newLoadingTask.destroy();
+      });
+
+      it("drops the catalog entries which don't describe the new document", async function () {
+        const metadata =
+          '<x:xmpmeta xmlns:x="adobe:ns:meta/">' +
+          '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
+          '<rdf:Description xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" ' +
+          'pdfaid:part="2" pdfaid:conformance="B"/>' +
+          "</rdf:RDF></x:xmpmeta>";
+        // Conformance markers and /UseOutlines without an outline.
+        const taggedPdf = assemblePdf(
+          [
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /PageMode /UseOutlines " +
+              "/MarkInfo << /Marked true >> /StructTreeRoot 5 0 R " +
+              "/Metadata 7 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R " +
+              "/MediaBox [0 0 100 100] >>\nendobj\n",
+            "4 0 obj\n<< /Type /Page /Parent 2 0 R " +
+              "/MediaBox [0 0 200 200] >>\nendobj\n",
+            // Only the first page has a structure-tree entry.
+            "5 0 obj\n<< /Type /StructTreeRoot /K [6 0 R] >>\nendobj\n",
+            "6 0 obj\n<< /Type /StructElem /S /P /P 5 0 R /Pg 3 0 R " +
+              "/K 0 >>\nendobj\n",
+            "7 0 obj\n<< /Type /Metadata /Subtype /XML " +
+              `/Length ${metadata.length} >>\nstream\n${metadata}\n` +
+              "endstream\nendobj\n",
+            "8 0 obj\n<< /Title (Test) /GTS_PDFXVersion (PDF/X-4) " +
+              "/Custom (Value) >>\nendobj\n",
+          ],
+          "/Info 8 0 R"
+        );
+        const untaggedPdf = assemblePdf([
+          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+          "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+          "3 0 obj\n<< /Type /Page /Parent 2 0 R " +
+            "/MediaBox [0 0 100 100] >>\nendobj\n",
+        ]);
+        const loadingTask = getDocument({ data: taggedPdf });
+        const pdfDoc = await loadingTask.promise;
+
+        for (const [context, pageInfos, isTagged] of [
+          ["copy", [{ document: null }], true],
+          // Removing this page removes the structure tree.
+          ["delete the tagged page", [{ document: null, excludePages: [0] }]],
+          // The other source has no /Marked flag or structure tree.
+          ["merge", [{ document: null }, { document: untaggedPdf }]],
+        ]) {
+          const data = await pdfDoc.extractPages(pageInfos);
+          const newLoadingTask = getDocument({ data });
+          const newPdfDoc = await newLoadingTask.promise;
+          expect(await newPdfDoc.getPageMode())
+            .withContext(context)
+            .toEqual("UseNone");
+          expect(await newPdfDoc.getMarkInfo())
+            .withContext(context)
+            .toEqual(
+              isTagged
+                ? new Map([
+                    ["Marked", true],
+                    ["UserProperties", false],
+                    ["Suspects", false],
+                  ])
+                : null
+            );
+          const { info, metadata: newMetadata } = await newPdfDoc.getMetadata();
+          expect(newMetadata).withContext(context).toBeNull();
+          if (context !== "merge") {
+            expect(info.Title).withContext(context).toEqual("Test");
+            expect(Object.fromEntries(info.Custom))
+              .withContext(context)
+              .toEqual({ Custom: "Value" });
+          }
+          await newLoadingTask.destroy();
+        }
+        await loadingTask.destroy();
+      });
+
+      it("preserves the unencrypted metadata of an encrypted document", async function () {
+        // This fixture is encrypted with /EncryptMetadata false.
+        const loadingTask = getDocument(
+          buildGetDocumentParams("issue19484_1.pdf")
+        );
+        const pdfDoc = await loadingTask.promise;
+        const { metadata } = await pdfDoc.getMetadata();
+        expect(metadata.get("xmp:creatortool")).toEqual(
+          "Adobe Acrobat Pro (64-bit) 24.5.20399"
+        );
+        const data = await pdfDoc.extractPages([{ document: null }]);
+        await loadingTask.destroy();
+
+        const newLoadingTask = getDocument({ data });
+        const newPdfDoc = await newLoadingTask.promise;
+        const { metadata: newMetadata } = await newPdfDoc.getMetadata();
+        expect(newMetadata?.getRaw()).toEqual(metadata.getRaw());
+        // Encrypted page content must still round-trip.
+        const { items } = await (await newPdfDoc.getPage(1)).getTextContent();
+        expect(items.length).toBeGreaterThan(0);
+        await newLoadingTask.destroy();
+      });
+
+      it("skips catalog entries which cannot be copied", async function () {
+        const objects = [
+          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Lang (en-US) " +
+            "/ViewerPreferences 4 0 R /OutputIntents [6 0 R] >>\nendobj\n",
+          "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+          "3 0 obj\n<< /Type /Page /Parent 2 0 R " +
+            "/MediaBox [0 0 100 100] >>\nendobj\n",
+          "4 0 obj\n<< /DisplayDocTitle true /Profile 7 0 R " +
+            "/Direction 5 0 R >>\nendobj\n",
+          // The mismatched object number makes xref.fetch throw.
+          "50 0 obj\n/R2L\nendobj\n",
+          "6 0 obj\n<< /Type /OutputIntent /S /GTS_PDFA1 " +
+            "/DestOutputProfile 7 0 R >>\nendobj\n",
+          "7 0 obj\n<< /N 3 /Dep 8 0 R /Length 12 >>\n" +
+            "stream\nTest profile\nendstream\nendobj\n",
+        ];
+        // Exercise overlapping copies with a shared dependency chain.
+        for (let i = 8; i < 16; i++) {
+          objects.push(`${i} 0 obj\n<< /Dep ${i + 1} 0 R >>\nendobj\n`);
+        }
+        objects.push("16 0 obj\n<< >>\nendobj\n");
+
+        const loadingTask = getDocument({ data: assemblePdf(objects) });
+        const pdfDoc = await loadingTask.promise;
+        const data = await pdfDoc.extractPages([{ document: null }]);
+        await loadingTask.destroy();
+
+        // Skip the failed preferences but retain the output intent and profile.
+        expect(countMarker(data, "/DisplayDocTitle")).toEqual(0);
+        expect(countMarker(data, "/Type /OutputIntent")).toEqual(1);
+        expect(countMarker(data, "Test profile")).toEqual(1);
+        expect(countMarker(data, "obj\n\nendobj")).toEqual(0);
+
+        const newLoadingTask = getDocument({ data });
+        const newPdfDoc = await newLoadingTask.promise;
+        expect(newPdfDoc.numPages).toEqual(1);
+        const { info } = await newPdfDoc.getMetadata();
+        expect(info.Language).toEqual("en-US");
+        expect(await newPdfDoc.getViewerPreferences()).toBeNull();
+        await newLoadingTask.destroy();
+      });
+    });
 
     describe("Merge pdfs", function () {
       it("should merge three PDFs", async function () {

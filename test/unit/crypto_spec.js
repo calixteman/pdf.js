@@ -34,6 +34,7 @@ import {
 import { calculateMD5 } from "../../src/core/calculate_md5.js";
 import { calculateSHA256 } from "../../src/core/calculate_sha256.js";
 import { saslPrep } from "../../src/core/sasl_prep.js";
+import { Stream } from "../../src/core/stream.js";
 
 describe("crypto", function () {
   // RFC 1321, A.5 Test suite
@@ -1067,6 +1068,74 @@ describe("CipherTransformFactory", function () {
         );
       }
     });
+    it("should encrypt the streams with their crypt filter", function () {
+      const dict = buildDict({
+        ...dict3,
+        CF: buildDict({
+          StdCF: buildDict({
+            CFM: Name.get("AESV3"),
+          }),
+        }),
+        StmF: Name.get("StdCF"),
+        StrF: Name.get("Identity"),
+        EFF: Name.get("Identity"),
+      });
+      const cipher = new CipherTransformFactory(
+        dict,
+        fileId1,
+        "user"
+      ).createCipherTransform(123, 0);
+      const string = "hello world";
+      const streamDict = new Dict();
+      const embeddedFileDict = new Dict();
+      embeddedFileDict.set("Type", Name.get("EmbeddedFile"));
+
+      // /StrF, /StmF and /EFF select separate defaults.
+      expect(cipher.encryptString(string)).toEqual(string);
+      const encrypted = cipher.encryptStream(string, streamDict);
+      expect(encrypted.length).toEqual(32);
+      const stream = new Stream(
+        stringToBytes(encrypted),
+        0,
+        encrypted.length,
+        streamDict
+      );
+      expect(cipher.createStream(stream, encrypted.length).getBytes()).toEqual(
+        stringToBytes(string)
+      );
+      expect(cipher.encryptStream(string, embeddedFileDict)).toEqual(string);
+      // An explicit /Crypt filter overrides those defaults.
+      expect(
+        cipher.encryptStream(string, streamDict, Name.get("Identity"))
+      ).toEqual(string);
+      expect(
+        cipher.encryptStream(string, embeddedFileDict, Name.get("StdCF")).length
+      ).toEqual(32);
+    });
+
+    it("should only leave the metadata unencrypted from V4 on", function () {
+      // /EncryptMetadata applies to V4/V5, not V1/V2.
+      for (const [context, encryptDict, password, encryptMetadata] of [
+        ["V2", dict1, "123456", true],
+        ["V5", aes256Dict, "user", false],
+      ]) {
+        const unencryptedMetadataDict = encryptDict.clone();
+        unencryptedMetadataDict.set("EncryptMetadata", false);
+        expect(
+          new CipherTransformFactory(encryptDict, fileId1, password)
+            .encryptMetadata
+        )
+          .withContext(context)
+          .toBeTrue();
+        expect(
+          new CipherTransformFactory(unencryptedMetadataDict, fileId1, password)
+            .encryptMetadata
+        )
+          .withContext(context)
+          .toEqual(encryptMetadata);
+      }
+    });
+
     it("should encrypt and have the correct length using AES128", function () {
       dict3.CF = buildDict({
         Identity: buildDict({

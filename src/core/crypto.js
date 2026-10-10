@@ -794,11 +794,9 @@ class CipherTransform {
    * @returns {DecryptStream}
    */
   createStream(stream, length, cryptFilterName = null) {
-    const defaultFilterName =
-      this.embeddedFilterName && isDict(stream.dict, "EmbeddedFile")
-        ? this.embeddedFilterName
-        : this.streamFilterName;
-    const Cipher = this.#getCipher(cryptFilterName || defaultFilterName);
+    const Cipher = this.#getCipher(
+      cryptFilterName || this.#getStreamFilterName(stream.dict)
+    );
     const cipher = new Cipher();
     return new DecryptStream(
       stream,
@@ -818,7 +816,31 @@ class CipherTransform {
   }
 
   encryptString(s) {
-    const Cipher = this.#getCipher(this.stringFilterName);
+    return this.#encrypt(s, this.stringFilterName);
+  }
+
+  /**
+   * @param {string} s - Stream data.
+   * @param {Dict} dict - Stream dictionary.
+   * @param {Name | null} [cryptFilterName] - Explicit /Crypt filter name.
+   * @returns {string} Encrypted data, or unchanged data for Identity.
+   */
+  encryptStream(s, dict, cryptFilterName = null) {
+    return this.#encrypt(s, cryptFilterName || this.#getStreamFilterName(dict));
+  }
+
+  /**
+   * @param {Dict} dict - Stream dictionary.
+   * @returns {Name | null} Default stream or embedded-file crypt filter name.
+   */
+  #getStreamFilterName(dict) {
+    return this.embeddedFilterName && isDict(dict, "EmbeddedFile")
+      ? this.embeddedFilterName
+      : this.streamFilterName;
+  }
+
+  #encrypt(s, filterName) {
+    const Cipher = this.#getCipher(filterName);
     const cipher = new Cipher();
     if (cipher instanceof AESBaseCipher) {
       // Append some chars equal to "16 - (M mod 16)"
@@ -1132,7 +1154,9 @@ class CipherTransformFactory {
     const encryptMetadata =
       (algorithm === 4 || algorithm === 5) &&
       dict.get("EncryptMetadata") !== false;
-    this.encryptMetadata = encryptMetadata;
+    // V1 and V2 always encrypt metadata; /EncryptMetadata requires V4 or V5.
+    this.encryptMetadata =
+      encryptMetadata || (algorithm !== 4 && algorithm !== 5);
 
     const fileIdBytes = stringToBytes(fileId);
     let passwordBytes, rawPasswordBytes;

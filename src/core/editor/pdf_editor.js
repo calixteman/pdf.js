@@ -31,13 +31,19 @@ import {
   Dict,
   isDict,
   isName,
+  isRefsEqual,
   Name,
   Ref,
   RefMap,
   RefSet,
 } from "../primitives.js";
-import { incrementalUpdate, writeValue } from "../writer.js";
-import { isArrayEqual, makeArr, stringToBytes } from "../../shared/util.js";
+import { incrementalUpdate, writeObject, writeValue } from "../writer.js";
+import {
+  isArrayEqual,
+  makeArr,
+  stringToBytes,
+  warn,
+} from "../../shared/util.js";
 import { NameTree, NumberTree } from "../name_number_tree.js";
 import { stringToAsciiOrUTF16BE, stringToPDFString } from "../string_utils.js";
 import { AnnotationFactory } from "../annotation.js";
@@ -49,6 +55,23 @@ import { StringStream } from "../stream.js";
 
 const MAX_LEAVES_PER_PAGES_NODE = 16;
 const MAX_IN_NAME_TREE_NODE = 64;
+
+// XMP markers used to skip metadata with conformance declarations.
+// Extraction does not validate conformance to these standards.
+const XMP_CONFORMANCE_IDS = [
+  "http://www.aiim.org/pdfa/ns/id/", // PDF/A
+  "http://www.aiim.org/pdfua/ns/id/", // PDF/UA
+  "http://www.aiim.org/pdfe/ns/id/", // PDF/E
+  "GTS_PDFXVersion", // PDF/X
+  "GTS_PDFVTVersion", // PDF/VT
+];
+
+// Conformance declarations to remove from the Info dictionary.
+const INFO_CONFORMANCE_KEYS = [
+  "GTS_PDFXVersion",
+  "GTS_PDFXConformance",
+  "ISO_PDFEVersion",
+];
 
 class PageData {
   constructor(page, documentData) {
@@ -93,6 +116,7 @@ class DocumentData {
     this.fieldToParent = new RefMap();
     this.outline = null;
     this.embeddedFiles = null;
+    this.markInfo = null;
   }
 }
 
@@ -148,6 +172,15 @@ class PDFEditor {
   // decides, so a key collision can never alias two distinct resources.
   #resourceStreamCache = new Map();
 
+  // Output object numbers to write without encryption.
+  #unencryptedRefs = new Set();
+
+  // Source of the first retained PDF page (image pages are skipped).
+  #firstDocumentData = null;
+
+  // Whether retained annotations include a file attachment.
+  #hasFileAttachments = false;
+
   currentDocument = null;
 
   oldPages = [];
@@ -165,6 +198,8 @@ class PDFEditor {
   version = "1.7";
 
   pageLabels = null;
+
+  ocProperties = null;
 
   namedDestinations = new Map();
 
@@ -272,7 +307,8 @@ class PDFEditor {
         return existingRef;
       }
       const oldRef = obj;
-      obj = await xref.fetchAsync(oldRef);
+      const isUnencrypted = this.#isUnencryptedMetadata(oldRef, xref);
+      obj = await xref.fetchAsync(oldRef, isUnencrypted);
       const mappedRef = oldRefMapping.get(oldRef);
       if (mappedRef) {
         // Another concurrent traversal may have allocated the clone while the
@@ -298,6 +334,10 @@ class PDFEditor {
 
       const newRef = this.newRef;
       oldRefMapping.put(oldRef, newRef);
+      if (isUnencrypted) {
+        // Keep this metadata unencrypted if source encryption is retained.
+        this.#unencryptedRefs.add(newRef.num);
+      }
 
       if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
         if (isDict(obj, "Page") && !this.currentDocument.pagesMap.has(oldRef)) {
@@ -348,7 +388,7 @@ class PDFEditor {
           ).then(newObj => (obj[i] = newObj))
         );
       }
-      await Promise.all(promises);
+      await this.#settleAll(promises);
       return obj;
     }
     let dict;
@@ -380,10 +420,38 @@ class PDFEditor {
           ).then(newObj => dict.set(key, newObj))
         );
       }
-      await Promise.all(promises);
+      await this.#settleAll(promises);
     }
 
     return obj;
+  }
+
+  /**
+   * Wait for all copies to settle before propagating an error, so catalog
+   * error handling cannot run while these copies are still pending.
+   * @param {Array<Promise>} promises
+   * @returns {Promise<void>}
+   */
+  async #settleAll(promises) {
+    for (const result of await Promise.allSettled(promises)) {
+      if (result.status === "rejected") {
+        throw result.reason;
+      }
+    }
+  }
+
+  /**
+   * Check for catalog metadata exempted from encryption by /EncryptMetadata.
+   * @param {Ref} ref
+   * @param {XRef} xref
+   * @returns {boolean}
+   */
+  #isUnencryptedMetadata(ref, xref) {
+    if (xref.encrypt?.encryptMetadata !== false) {
+      return false;
+    }
+    const metadataRef = xref.getCatalogObj().getRaw("Metadata");
+    return metadataRef instanceof Ref && isRefsEqual(ref, metadataRef);
   }
 
   /**
@@ -1111,6 +1179,8 @@ class PDFEditor {
       }
     }
     this.isSingleFile = documents.size === 1;
+    this.#firstDocumentData =
+      this.oldPages.find(p => !!p)?.documentData ?? null;
     promises.length = 0;
 
     this.#collectValidDestinations(allDocumentData);
@@ -1126,6 +1196,7 @@ class PDFEditor {
 
     this.#findDuplicateNamedDestinations();
     this.#setPostponedRefCopies(allDocumentData);
+    await this.#collectOCProperties(allDocumentData);
 
     const imageSlots = new Map();
     for (const entry of imageEntries) {
@@ -1182,6 +1253,9 @@ class PDFEditor {
       pdfManager
         .ensureCatalog("rawEmbeddedFiles")
         .then(ef => (documentData.embeddedFiles = ef)),
+      pdfManager
+        .ensureCatalog("markInfo")
+        .then(markInfo => (documentData.markInfo = markInfo)),
     ]);
     const structTreeRoot = documentData.structTreeRoot;
     if (structTreeRoot) {
@@ -1239,8 +1313,10 @@ class PDFEditor {
       const newAnnotationIndex = newIndex++;
       promises.push(
         xref.fetchIfRefAsync(annotationRef).then(async annotationDict => {
-          if (!isName(annotationDict.get("Subtype"), "Link")) {
-            if (isName(annotationDict.get("Subtype"), "Widget")) {
+          const subtype = annotationDict.get("Subtype");
+          if (!isName(subtype, "Link")) {
+            this.#hasFileAttachments ||= isName(subtype, "FileAttachment");
+            if (isName(subtype, "Widget")) {
               hasSignatureAnnotations ||= isName(
                 getInheritableProperty({ dict: annotationDict, key: "FT" }),
                 "Sig"
@@ -2365,13 +2441,7 @@ class PDFEditor {
     if (!this.isSingleFile) {
       return;
     }
-    const firstRealPage = this.oldPages.find(p => !!p);
-    if (!firstRealPage) {
-      return;
-    }
-    const {
-      documentData: { document, pageLabels },
-    } = firstRealPage;
+    const { document, pageLabels } = this.#firstDocumentData;
     if (!pageLabels) {
       return;
     }
@@ -2960,6 +3030,538 @@ class PDFEditor {
   }
 
   /**
+   * Copy a catalog entry, skipping it if dependency traversal fails.
+   * @param {string} key
+   * @param {XRef} xref
+   * @param {*} [value] - Override for the raw catalog value.
+   * @returns {Promise<*>} The copied value, or undefined.
+   */
+  async #copyCatalogEntry(key, xref, value = xref.getCatalogObj().getRaw(key)) {
+    if (value === undefined) {
+      return undefined;
+    }
+    try {
+      return await this.#collectDependencies(value, true, xref);
+    } catch (ex) {
+      warn(`Cannot copy the catalog entry "${key}": "${ex}".`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Return one DocumentData per source, ordered by its first retained page.
+   * @returns {Array<DocumentData>}
+   */
+  #getPagesDocumentData() {
+    const allDocumentData = new Map();
+    for (const pageData of this.oldPages) {
+      if (pageData) {
+        const { documentData } = pageData;
+        allDocumentData.getOrInsert(documentData.document, documentData);
+      }
+    }
+    return Array.from(allDocumentData.values());
+  }
+
+  /**
+   * Copy optional content groups before pages so copies of the same source
+   * share group references. Keep groups even if their pages were removed.
+   * @param {Array<DocumentData>} allDocumentData
+   * @returns {Promise<void>}
+   */
+  async #collectOCProperties(allDocumentData) {
+    const allOCProperties = [];
+    for (const documentData of this.#getPagesDocumentData()) {
+      const { document, oldRefMapping } = documentData;
+      const { xref } = document;
+      const rawOCProperties = xref.getCatalogObj().getRaw("OCProperties");
+      let ocProperties, ocgs;
+      try {
+        ocProperties = await xref.fetchIfRefAsync(rawOCProperties);
+        if (ocProperties instanceof Dict) {
+          ocgs = await ocProperties.getAsync("OCGs");
+        }
+        if (!Array.isArray(ocgs)) {
+          continue;
+        }
+        ocProperties = this.isSingleFile
+          ? rawOCProperties
+          : await this.#getMergeableOCProperties(ocProperties, ocgs, xref);
+      } catch (ex) {
+        warn(`Cannot copy the catalog entry "OCProperties": "${ex}".`);
+        continue;
+      }
+      this.currentDocument = documentData;
+      const copy = await this.#copyCatalogEntry(
+        "OCProperties",
+        xref,
+        ocProperties
+      );
+      this.currentDocument = null;
+      if (!copy) {
+        continue;
+      }
+      allOCProperties.push(copy);
+      for (const data of allDocumentData) {
+        if (data === documentData || data.document !== document) {
+          continue;
+        }
+        for (const ocg of ocgs) {
+          const newRef = ocg instanceof Ref && oldRefMapping.get(ocg);
+          if (newRef) {
+            data.oldRefMapping.put(ocg, newRef);
+          }
+        }
+      }
+    }
+    if (allOCProperties.length > 0) {
+      this.ocProperties = this.isSingleFile
+        ? allOCProperties[0]
+        : this.#mergeOCProperties(allOCProperties);
+    }
+  }
+
+  /**
+   * Select groups and default configuration entries for merging, omitting
+   * alternate configurations. Resolve top-level references before copying,
+   * since the merge rebuilds these containers.
+   * @param {Dict} ocProperties
+   * @param {Array} ocgs
+   * @param {XRef} xref
+   * @returns {Promise<Dict>}
+   */
+  async #getMergeableOCProperties(ocProperties, ocgs, xref) {
+    const config = await ocProperties.getAsync("D");
+    const newConfig = new Dict(xref);
+    if (config instanceof Dict) {
+      for (const key of [
+        "BaseState",
+        "ON",
+        "OFF",
+        "Intent",
+        "AS",
+        "Order",
+        "ListMode",
+        "RBGroups",
+        "Locked",
+      ]) {
+        newConfig.setIfDefined(key, await config.getAsync(key));
+      }
+    }
+    const newOCProperties = new Dict(xref);
+    newOCProperties.set("OCGs", ocgs);
+    newOCProperties.set("D", newConfig);
+    return newOCProperties;
+  }
+
+  /**
+   * Merge the copied groups and default configuration entries.
+   * @param {Array<Dict>} allOCProperties - The values returned by
+   *   #getMergeableOCProperties, once copied.
+   * @returns {Dict}
+   */
+  #mergeOCProperties(allOCProperties) {
+    const ocgs = [];
+    const off = [];
+    const usageApplications = [];
+    const order = [];
+    const rbGroups = [];
+    const locked = [];
+    const intents = new Set();
+    let listMode;
+    const hasOrder = allOCProperties.some(ocProperties =>
+      Array.isArray(ocProperties.get("D").get("Order"))
+    );
+    for (const ocProperties of allOCProperties) {
+      const groups = ocProperties.get("OCGs");
+      const config = ocProperties.get("D");
+      const getArray = key => {
+        const value = config.get(key);
+        return Array.isArray(value) ? value : [];
+      };
+      ocgs.push(...groups);
+      if (isName(config.get("BaseState"), "OFF")) {
+        // Express this OFF base state using the merged configuration's OFF
+        // list; its omitted BaseState defaults to ON (ISO 32000-1, Table 101).
+        const on = new RefSet();
+        for (const ref of getArray("ON")) {
+          if (ref instanceof Ref) {
+            on.put(ref);
+          }
+        }
+        for (const ref of groups) {
+          if (ref instanceof Ref && !on.has(ref)) {
+            off.push(ref);
+          }
+        }
+      } else {
+        off.push(...getArray("OFF"));
+      }
+      usageApplications.push(...getArray("AS"));
+      rbGroups.push(...getArray("RBGroups"));
+      locked.push(...getArray("Locked"));
+      if (hasOrder) {
+        // Fall back to a flat list for sources without /Order.
+        const groupsOrder = config.get("Order");
+        order.push(...(Array.isArray(groupsOrder) ? groupsOrder : groups));
+      }
+      const intent = config.get("Intent") ?? Name.get("View");
+      for (const name of Array.isArray(intent) ? intent : [intent]) {
+        if (name instanceof Name) {
+          intents.add(name.name);
+        }
+      }
+      listMode ??= config.get("ListMode");
+    }
+
+    const newConfig = new Dict();
+    for (const [key, value] of [
+      ["OFF", off],
+      ["AS", usageApplications],
+      ["Order", order],
+      ["RBGroups", rbGroups],
+      ["Locked", locked],
+    ]) {
+      if (value.length > 0) {
+        newConfig.set(key, value);
+      }
+    }
+    if (intents.has("All")) {
+      newConfig.setIfName("Intent", "All");
+    } else if (intents.size > 1 || !intents.has("View")) {
+      newConfig.set(
+        "Intent",
+        Array.from(intents, name => Name.get(name))
+      );
+    }
+    newConfig.setIfName("ListMode", listMode);
+
+    const newOCProperties = new Dict();
+    newOCProperties.set("OCGs", ocgs);
+    newOCProperties.set("D", newConfig);
+    return newOCProperties;
+  }
+
+  /**
+   * Copy supported catalog entries from the first retained PDF source.
+   * Entries tied to the page tree are rebuilt separately.
+   * @returns {Promise<void>}
+   */
+  async #copyCatalogEntries() {
+    const documentData = this.#firstDocumentData;
+    if (!documentData) {
+      return;
+    }
+    const {
+      document: { xref },
+    } = documentData;
+    this.currentDocument = documentData;
+    const entries = new Map([
+      ["Lang", this.#copyCommonCatalogEntry("Lang", xref)],
+      ["OutputIntents", this.#copyCommonCatalogEntry("OutputIntents", xref)],
+      ["ViewerPreferences", this.#copyViewerPreferences(xref)],
+      ["PageMode", this.#getCatalogName("PageMode", xref)],
+      ["PageLayout", this.#getCatalogName("PageLayout", xref)],
+    ]);
+    if (this.isSingleFile) {
+      // Source XMP may not describe a merge, as with Info in #makeInfo.
+      entries.set("Metadata", this.#copyMetadata(xref));
+    }
+    for (const [key, promise] of entries) {
+      this.rootDict.setIfDefined(key, await promise);
+    }
+    this.currentDocument = null;
+    this.rootDict.setIfDefined("OCProperties", this.ocProperties);
+  }
+
+  /**
+   * Copy a catalog entry only if it compares equal across retained PDF sources.
+   * @param {string} key
+   * @param {XRef} xref
+   * @returns {Promise<*>} The copied value, or undefined.
+   */
+  async #copyCommonCatalogEntry(key, xref) {
+    const value = xref.getCatalogObj().getRaw(key);
+    if (value === undefined) {
+      return undefined;
+    }
+    if (!this.isSingleFile) {
+      try {
+        for (const { document } of this.#getPagesDocumentData()) {
+          const otherXref = document.xref;
+          if (
+            otherXref !== xref &&
+            !(await this.#isSameValue(
+              value,
+              xref,
+              otherXref.getCatalogObj().getRaw(key),
+              otherXref
+            ))
+          ) {
+            return undefined;
+          }
+        }
+      } catch (ex) {
+        warn(`Cannot compare the catalog entries "${key}": "${ex}".`);
+        return undefined;
+      }
+    }
+    return this.#copyCatalogEntry(key, xref, value);
+  }
+
+  /**
+   * Compare values recursively, resolving references in each source.
+   * Streams must have equal dictionaries and encoded bytes.
+   * @param {*} a
+   * @param {XRef} xrefA
+   * @param {*} b
+   * @param {XRef} xrefB
+   * @param {Set<string>} [visited] - The pairs of compared references.
+   * @returns {Promise<boolean>}
+   */
+  async #isSameValue(a, xrefA, b, xrefB, visited = new Set()) {
+    if (a instanceof Ref && b instanceof Ref) {
+      const key = `${a} ${b}`;
+      if (visited.has(key)) {
+        // Reuse a previous comparison or stop a reference cycle.
+        return true;
+      }
+      visited.add(key);
+    }
+    [a, b] = await Promise.all([
+      xrefA.fetchIfRefAsync(a),
+      xrefB.fetchIfRefAsync(b),
+    ]);
+    if (a instanceof Name) {
+      return isName(b, a.name);
+    }
+    if (Array.isArray(a)) {
+      if (!Array.isArray(b) || a.length !== b.length) {
+        return false;
+      }
+      for (let i = 0, ii = a.length; i < ii; i++) {
+        if (!(await this.#isSameValue(a[i], xrefA, b[i], xrefB, visited))) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (a instanceof BaseStream) {
+      return (
+        b instanceof BaseStream &&
+        (await this.#isSameValue(a.dict, xrefA, b.dict, xrefB, visited)) &&
+        isArrayEqual(this.#rawStreamBytes(a), this.#rawStreamBytes(b))
+      );
+    }
+    if (a instanceof Dict) {
+      if (!(b instanceof Dict) || a.size !== b.size) {
+        return false;
+      }
+      for (const [key, value] of a.getRawEntries()) {
+        if (
+          !(await this.#isSameValue(
+            value,
+            xrefA,
+            b.getRaw(key),
+            xrefB,
+            visited
+          ))
+        ) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return a === b;
+  }
+
+  /**
+   * Read a catalog entry if it is a Name.
+   * @param {string} key
+   * @param {XRef} xref
+   * @returns {Promise<Name|undefined>}
+   */
+  async #getCatalogName(key, xref) {
+    try {
+      const value = await xref.fetchIfRefAsync(
+        xref.getCatalogObj().getRaw(key)
+      );
+      return value instanceof Name ? value : undefined;
+    } catch (ex) {
+      warn(`Cannot copy the catalog entry "${key}": "${ex}".`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Copy viewer preferences, remapping /PrintPageRange to output pages.
+   * @param {XRef} xref
+   * @returns {Promise<Dict|undefined>}
+   */
+  async #copyViewerPreferences(xref) {
+    let prefs;
+    try {
+      prefs = await xref.fetchIfRefAsync(
+        xref.getCatalogObj().getRaw("ViewerPreferences")
+      );
+      if (prefs instanceof Dict && prefs.has("PrintPageRange")) {
+        const range = this.#getPrintPageRange(
+          await prefs.getAsync("PrintPageRange")
+        );
+        // Leave the source dictionary unchanged.
+        prefs = prefs.clone();
+        if (range) {
+          prefs.set("PrintPageRange", range);
+        } else {
+          prefs.delete("PrintPageRange");
+        }
+      }
+    } catch (ex) {
+      warn(`Cannot copy the catalog entry "ViewerPreferences": "${ex}".`);
+      return undefined;
+    }
+    return prefs instanceof Dict && prefs.size > 0
+      ? this.#copyCatalogEntry("ViewerPreferences", xref, prefs)
+      : undefined;
+  }
+
+  /**
+   * Remap the first PDF source's print preset, including pages from other
+   * sources and images. Page numbers are one-based (ISO 32000-1, Table 150).
+   * @param {*} range
+   * @returns {Array<number>|null} The new preset, or null to omit it.
+   */
+  #getPrintPageRange(range) {
+    if (
+      !Array.isArray(range) ||
+      range.length % 2 !== 0 ||
+      !range.every(Number.isInteger)
+    ) {
+      return null;
+    }
+    const { document } = this.#firstDocumentData;
+    const newRange = [];
+    for (let i = 0, ii = this.oldPages.length; i < ii; i++) {
+      const pageData = this.oldPages[i];
+      if (pageData?.documentData.document === document) {
+        const pageNumber = pageData.page.pageIndex + 1;
+        let isPrinted = false;
+        for (let j = 0, jj = range.length; j < jj && !isPrinted; j += 2) {
+          isPrinted = range[j] <= pageNumber && pageNumber <= range[j + 1];
+        }
+        if (!isPrinted) {
+          continue;
+        }
+      }
+      // Coalesce consecutive pages.
+      if (newRange.at(-1) === i) {
+        newRange[newRange.length - 1] = i + 1;
+      } else {
+        newRange.push(i + 1, i + 1);
+      }
+    }
+    // Omit empty and all-page presets, leaving the reader's default.
+    const isAllPages =
+      newRange.length === 0 ||
+      (newRange.length === 2 &&
+        newRange[0] === 1 &&
+        newRange[1] === this.oldPages.length);
+    return isAllPages ? null : newRange;
+  }
+
+  /**
+   * Copy catalog XMP without updating it to match the new Info dictionary.
+   * Skip packets containing known conformance markers: extraction does not
+   * validate those claims.
+   * @param {XRef} xref
+   * @returns {Promise<Ref|undefined>}
+   */
+  async #copyMetadata(xref) {
+    const ref = xref.getCatalogObj().getRaw("Metadata");
+    if (!(ref instanceof Ref)) {
+      return undefined;
+    }
+    try {
+      const stream = await xref.fetchAsync(
+        ref,
+        this.#isUnencryptedMetadata(ref, xref)
+      );
+      if (!(stream instanceof BaseStream)) {
+        return undefined;
+      }
+      // Ignore NUL bytes to match ASCII markers in UTF-16/UTF-32 data.
+      const xmp = stream.getString().replaceAll("\0", "");
+      if (XMP_CONFORMANCE_IDS.some(id => xmp.includes(id))) {
+        warn("The XMP metadata isn't copied: it claims a conformance.");
+        return undefined;
+      }
+    } catch (ex) {
+      warn(`Cannot copy the catalog entry "Metadata": "${ex}".`);
+      return undefined;
+    }
+    return this.#copyCatalogEntry("Metadata", xref, ref);
+  }
+
+  /**
+   * With a structure tree, combine source /MarkInfo flags. Keep /Marked only
+   * if every retained PDF page's source sets it; image pages are excluded.
+   */
+  #makeMarkInfo() {
+    if (!this.rootDict.has("StructTreeRoot")) {
+      return;
+    }
+    let marked = true,
+      userProperties = false,
+      suspects = false;
+    for (const pageData of this.oldPages) {
+      if (!pageData) {
+        // Image pages do not participate in the source /MarkInfo check.
+        continue;
+      }
+      const { markInfo } = pageData.documentData;
+      marked &&= markInfo?.get("Marked") === true;
+      userProperties ||= markInfo?.get("UserProperties") === true;
+      suspects ||= markInfo?.get("Suspects") === true;
+    }
+    const markInfo = new Dict();
+    for (const [key, value] of [
+      ["Marked", marked],
+      ["UserProperties", userProperties],
+      ["Suspects", suspects],
+    ]) {
+      if (value) {
+        markInfo.set(key, true);
+      }
+    }
+    if (markInfo.size > 0) {
+      this.rootDict.set("MarkInfo", markInfo);
+    }
+  }
+
+  /**
+   * Drop sidebar modes when their catalog data or attachments are absent.
+   */
+  #fixPageMode() {
+    const { rootDict } = this;
+    const pageMode = rootDict.get("PageMode");
+    let isEmpty = false;
+    switch (pageMode instanceof Name && pageMode.name) {
+      case "UseOutlines":
+        isEmpty = !rootDict.has("Outlines");
+        break;
+      case "UseOC":
+        isEmpty = !rootDict.has("OCProperties");
+        break;
+      case "UseAttachments":
+        isEmpty = this.embeddedFiles.size === 0 && !this.#hasFileAttachments;
+        break;
+    }
+    if (isEmpty) {
+      rootDict.delete("PageMode");
+    }
+  }
+
+  /**
    * Create the root dictionary.
    * @returns {Promise<void>}
    */
@@ -2967,13 +3569,16 @@ class PDFEditor {
     const { rootDict } = this;
     rootDict.setIfName("Type", "Catalog");
     rootDict.setIfName("Version", this.version);
+    await this.#copyCatalogEntries();
     this.#makeAcroForm();
     this.#makePageTree();
     this.#makePageLabelsTree();
     this.#makeEmbeddedFilesTree();
     this.#makeDestinationsTree();
     this.#makeStructTree();
+    this.#makeMarkInfo();
     await this.#makeOutline();
+    this.#fixPageMode();
   }
 
   /**
@@ -2983,15 +3588,18 @@ class PDFEditor {
   #makeInfo() {
     const infoMap = new Map();
     if (this.isSingleFile) {
-      const firstRealPage = this.oldPages.find(p => !!p);
       const {
         xref: { trailer },
-      } = firstRealPage.documentData.document;
+      } = this.#firstDocumentData.document;
       const oldInfoDict = trailer.get("Info");
       for (const [key, value] of oldInfoDict || []) {
         if (typeof value === "string") {
           infoMap.set(key, stringToPDFString(value));
         }
+      }
+      // Extraction does not validate these conformance claims.
+      for (const key of INFO_CONFORMANCE_KEYS) {
+        infoMap.delete(key);
       }
     }
     infoMap.delete("ModDate");
@@ -3019,8 +3627,7 @@ class PDFEditor {
     if (!this.isSingleFile) {
       return [null, null, null];
     }
-    const firstRealPage = this.oldPages.find(p => !!p);
-    const { documentData } = firstRealPage;
+    const documentData = this.#firstDocumentData;
     const {
       document: {
         xref: { trailer, encrypt },
@@ -3045,16 +3652,32 @@ class PDFEditor {
 
   /**
    * Create the changes required to write the new PDF document.
+   * @param {CipherTransformFactory|null} encrypt
+   * @param {Ref|null} encryptRef
    * @returns {Promise<[RefMap, Ref]>}
    */
-  async #createChanges() {
+  async #createChanges(encrypt, encryptRef) {
     const changes = new RefMap();
     changes.put(Ref.get(0, 0xffff), { data: null });
     for (let i = 1, ii = this.xref.length; i < ii; i++) {
+      const ref = Ref.get(i, 0);
+      const obj = this.xref[i];
       if (this.objStreamRefs?.has(i)) {
-        await this.#createObjectStream(Ref.get(i, 0), this.xref[i], changes);
+        await this.#createObjectStream(ref, obj, changes);
+      } else if (typeof obj === "string" || this.#unencryptedRefs.has(i)) {
+        // writeChanges treats strings as serialized objects. Serialize PDF
+        // strings here, and bypass encryption for exempted metadata streams.
+        const buffer = [];
+        await writeObject(
+          ref,
+          obj,
+          buffer,
+          this.#unencryptedRefs.has(i) ? {} : { encrypt, encryptRef }
+        );
+        changes.put(ref, { data: buffer.join("") });
       } else {
-        changes.put(Ref.get(i, 0), { data: this.xref[i] });
+        // Missing objects from failed copies become free xref entries.
+        changes.put(ref, { data: obj ?? null });
       }
     }
 
@@ -3101,7 +3724,10 @@ class PDFEditor {
     await this.#makeRoot();
     const infoMap = this.#makeInfo();
     const [encryptRef, encrypt, fileIds] = await this.#makeEncrypt();
-    const [changes, xrefTableRef] = await this.#createChanges();
+    const [changes, xrefTableRef] = await this.#createChanges(
+      encrypt,
+      encryptRef
+    );
 
     // Create the PDF header in order to help sniffers.
     // PDF version must be in the range 1.0 to 1.7 inclusive.
