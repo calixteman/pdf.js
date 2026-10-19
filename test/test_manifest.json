@@ -14750,5 +14750,14 @@
     "type": "eq",
     "annotations": true,
     "about": "NoRotate FreeText annotation on a page with /Rotate 270."
+  },
+  {
+    "id": "issue_cmap12",
+    "file": "pdfs/issue_cmap12.pdf",
+    "md5": "5132041f6b20cc46d87e3776c61e56fe",
+    "rounds": 1,
+    "link": false,
+    "type": "load",
+    "about": "Format 12 cmap group spanning 0 to 0xffffffff; must load without exhausting memory."
   }
 ]
