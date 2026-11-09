@@ -286,6 +286,31 @@ describe("Interaction", () => {
         })
       );
     });
+
+    it("must check that an update from the sandbox only targets the field with the given id", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
+          await page.evaluate(() => {
+            for (const detail of [
+              { id: 'x"], [data-element-id="416R', value: "foo" },
+              { id: "422R", value: "bar" },
+            ]) {
+              window.dispatchEvent(
+                new CustomEvent("updatefromsandbox", { detail })
+              );
+            }
+          });
+          await page.waitForFunction(
+            `${getQuerySelector("422R")}.value === "bar"`
+          );
+
+          const text = await page.$eval(getSelector("416R"), el => el.value);
+          expect(text).withContext(`In ${browserName}`).toEqual("");
+        })
+      );
+    });
   });
 
   describe("in js-buttons.pdf", () => {
