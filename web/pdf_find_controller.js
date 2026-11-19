@@ -428,6 +428,8 @@ class PDFFindController {
 
   #savedPageData = null;
 
+  #useTextLayerExtraction = false;
+
   /**
    * @param {PDFFindControllerOptions} options
    */
@@ -478,8 +480,9 @@ class PDFFindController {
    * Set a reference to the PDF document in order to search it.
    * Note that searching is not possible if this method is not called.
    * @param {PDFDocumentProxy} pdfDocument - The PDF document to search.
+   * @param {boolean} [useTextLayerExtraction] - Match the viewer's text layer.
    */
-  setDocument(pdfDocument) {
+  setDocument(pdfDocument, useTextLayerExtraction = false) {
     if (this._pdfDocument) {
       this.#reset();
     }
@@ -487,6 +490,7 @@ class PDFFindController {
       return;
     }
     this._pdfDocument = pdfDocument;
+    this.#useTextLayerExtraction = useTextLayerExtraction;
     this._firstPageCapability.resolve();
   }
 
@@ -884,7 +888,11 @@ class PDFFindController {
     }
 
     let deferred = Promise.resolve();
-    const textOptions = { disableNormalization: true };
+    const textOptions = {
+      disableNormalization: true,
+      includeMarkedContent: this.#useTextLayerExtraction,
+      useTextLayerExtraction: this.#useTextLayerExtraction,
+    };
     const pdfDoc = this._pdfDocument;
     for (let i = 0, ii = this._linkService.pagesCount; i < ii; i++) {
       const { promise, resolve } = createPromiseCapability();

@@ -245,7 +245,7 @@ describe("accessibility", () => {
     let pages;
 
     beforeEach(async () => {
-      pages = await loadAndWait("bug1708040.pdf", ".structTree");
+      pages = await loadAndWait("bug1708040.pdf", ".structTree", 150);
     });
 
     afterEach(async () => {
@@ -268,14 +268,35 @@ describe("accessibility", () => {
 
           expect(spanId).withContext(`In ${browserName}`).not.toBeNull();
 
-          const ariaLabel = await page.evaluate(id => {
-            const img = document.querySelector(`#${id} > span[role="img"]`);
-            return img.getAttribute("aria-label");
-          }, spanId);
+          const { ariaLabel, bounds } = await page.$eval(
+            `#${spanId} > span[role="img"]`,
+            img => {
+              const rect = img.getBoundingClientRect();
+              const canvas = img.closest(".page").querySelector("canvas");
+              const { left, bottom, width, height } =
+                canvas.getBoundingClientRect();
+              // Convert the on-screen edges back to this 612 x 792 PDF page.
+              return {
+                ariaLabel: img.getAttribute("aria-label"),
+                bounds: [
+                  ((rect.left - left) * 612) / width,
+                  ((bottom - rect.bottom) * 792) / height,
+                  ((rect.right - left) * 612) / width,
+                  ((bottom - rect.top) * 792) / height,
+                ],
+              };
+            }
+          );
 
           expect(ariaLabel)
             .withContext(`In ${browserName}`)
             .toEqual("A logo of a fox and a globe");
+          const bbox = [72, 287.782, 456, 695.032];
+          for (const [i, edge] of bounds.entries()) {
+            expect(edge)
+              .withContext(`In ${browserName}`)
+              .toBeCloseTo(bbox[i], 1);
+          }
         })
       );
     });

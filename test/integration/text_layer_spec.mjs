@@ -96,22 +96,7 @@ describe("Text layer", () => {
       pages = await loadAndWait(
         "tracemonkey.pdf",
         ".textLayer .endOfContent",
-        100,
-        {
-          postPageSetup: async page => {
-            await page.evaluate(() => {
-              const style = document.createElement("style");
-              style.textContent = `
-                body,
-                #mainContainer {
-                  letter-spacing: 5px;
-                  word-spacing: 5px;
-                }
-              `;
-              document.documentElement.append(style);
-            });
-          },
-        }
+        100
       );
     });
 
@@ -125,20 +110,30 @@ describe("Text layer", () => {
           const spacing = await page.evaluate(() => {
             const textLayer = document.querySelector(".textLayer");
             const span = textLayer.querySelector("span");
+            const getSpanSpacing = () => {
+              const { letterSpacing, wordSpacing } = getComputedStyle(span);
+              return { letterSpacing, wordSpacing };
+            };
+            const before = getSpanSpacing();
+            for (const element of [
+              document.body,
+              document.getElementById("mainContainer"),
+            ]) {
+              element.style.letterSpacing = "5px";
+              element.style.wordSpacing = "5px";
+            }
             const textLayerStyle = getComputedStyle(textLayer);
-            const spanStyle = getComputedStyle(span);
             return {
               textLayerLetterSpacing: textLayerStyle.letterSpacing,
               textLayerWordSpacing: textLayerStyle.wordSpacing,
-              spanLetterSpacing: spanStyle.letterSpacing,
-              spanWordSpacing: spanStyle.wordSpacing,
+              before,
+              after: getSpanSpacing(),
             };
           });
 
           expect(spacing.textLayerLetterSpacing).toEqual("normal");
-          expect(spacing.spanLetterSpacing).toEqual("normal");
           expect(["0px", "normal"]).toContain(spacing.textLayerWordSpacing);
-          expect(["0px", "normal"]).toContain(spacing.spanWordSpacing);
+          expect(spacing.after).toEqual(spacing.before);
         })
       );
     });
@@ -1626,21 +1621,32 @@ describe("Text layer", () => {
     const checkFonts = async mode => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          const { color, fontFamily } = await page.evaluate(() => {
-            const span = [
-              ...document.querySelectorAll(
-                `.page[data-page-number = "1"] .textLayer span`
-              ),
-            ].find(({ textContent }) => textContent === "Andreas Gal");
-            const style = getComputedStyle(span);
-            return { color: style.color, fontFamily: style.fontFamily };
-          });
+          const { color, fontFamily, newTextLayer } = await page.evaluate(
+            () => {
+              const span = [
+                ...document.querySelectorAll(
+                  `.page[data-page-number = "1"] .textLayer span`
+                ),
+              ].find(({ textContent }) => textContent === "Andreas Gal");
+              const style = getComputedStyle(span);
+              return {
+                color: style.color,
+                fontFamily: style.fontFamily,
+                newTextLayer: span
+                  .closest(".textLayer")
+                  .classList.contains("newTextLayer"),
+              };
+            }
+          );
           expect(color)
             .withContext(browserName)
             .toEqual(mode === 2 ? "rgb(255, 0, 0)" : "rgba(0, 0, 0, 0)");
-          expect(/^"?g_d\d+_tf\d+"?, /.test(fontFamily))
+          expect(/^"?g_d\d+_tf\d+"?$/.test(fontFamily))
             .withContext(`${browserName}: ${fontFamily}`)
             .toEqual(mode !== 0);
+          expect(newTextLayer)
+            .withContext(browserName)
+            .toBe(mode !== 0);
         })
       );
     };

@@ -330,8 +330,11 @@ function setLayerDimensions(
     const { pageWidth, pageHeight } = viewport.rawDims;
     const { style } = div;
 
-    const widthStr = `round(down, var(--total-scale-factor) * ${pageWidth}px, var(--scale-round-x))`,
-      heightStr = `round(down, var(--total-scale-factor) * ${pageHeight}px, var(--scale-round-y))`;
+    // Round to the canvas dimensions before converting to the layer's units.
+    const dimension = (size, axis) =>
+      `calc(round(down, var(--total-scale-factor) * ${size}px, var(--scale-round-${axis})) / var(--layer-zoom, 1))`;
+    const widthStr = dimension(pageWidth, "x");
+    const heightStr = dimension(pageHeight, "y");
 
     if (!mustFlip || viewport.rotation % 180 === 0) {
       style.width = widthStr;

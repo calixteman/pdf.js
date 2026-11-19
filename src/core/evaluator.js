@@ -58,6 +58,7 @@ import {
   isKnownFontName,
 } from "./standard_fonts.js";
 import { getTilingPatternIR, Pattern } from "./pattern.js";
+import { getUnmirroredTransform, TextRuns } from "./text_extraction.js";
 import {
   IDENTITY_MATRIX,
   isNumberArray,
@@ -2372,7 +2373,7 @@ class PartialEvaluator {
     viewBox,
     lang = null,
     disableNormalization = false,
-    textLayerFonts = null,
+    textExtraction = null,
     keepWhiteSpace = false,
     prevRefs = null,
     intersector = null,
@@ -2410,6 +2411,9 @@ class PartialEvaluator {
       styles: Object.create(null),
       lang,
     };
+    const textRuns = textExtraction
+      ? new TextRuns(item => textContent.items.push(item))
+      : null;
     const textContentItem = {
       initialized: false,
       str: [],
@@ -2547,16 +2551,6 @@ class PartialEvaluator {
     let textState, currentTextState;
     let lastFakeSpaceExtraCharId = -1;
 
-    // For a reflected transform with d > 0, move the origin along the baseline
-    // by the item width, then reverse the baseline direction.
-    function getUnmirroredTransform([a, b, c, d, e, f], width) {
-      if (a * d - b * c >= 0 || d <= 0) {
-        return null;
-      }
-      const scale = width / Math.hypot(a, b);
-      return [-a, -b, c, d, e + a * scale, f + b * scale];
-    }
-
     function pushWhitespace({
       width = 0,
       height = 0,
@@ -2607,10 +2601,7 @@ class PartialEvaluator {
       );
     }
 
-    function ensureTextContentItem() {
-      if (textContentItem.initialized) {
-        return textContentItem;
-      }
+    function ensureTextStyle() {
       const { font, loadedName } = textState;
       if (!seenStyles.has(loadedName)) {
         seenStyles.add(loadedName);
@@ -2625,8 +2616,16 @@ class PartialEvaluator {
           style.fontSubstitution = font.systemFontInfo.css;
           style.fontSubstitutionLoadedName = font.systemFontInfo.loadedName;
         }
-        textLayerFonts?.addFont(loadedName, font);
+        textExtraction?.addFont(loadedName, font);
       }
+    }
+
+    function ensureTextContentItem() {
+      if (textContentItem.initialized) {
+        return textContentItem;
+      }
+      const { font, loadedName } = textState;
+      ensureTextStyle();
       textContentItem.fontName = loadedName;
 
       const trm = (textContentItem.transform = getCurrentTextTransform());
@@ -3097,7 +3096,104 @@ class PartialEvaluator {
       return true;
     }
 
+    function buildTextRun(chars, extraSpacing) {
+      const { font, fontSize, textHScale, fontMatrix, loadedName, textRise } =
+        textState;
+      const { vertical } = font;
+      if (!chars) {
+        // A TJ number moves the cursor without painting a glyph or adding Tc.
+        if (vertical) {
+          textState.translateTextMatrix(0, -extraSpacing);
+        } else {
+          textState.translateTextMatrix(extraSpacing * textHScale, 0);
+        }
+        return;
+      }
+      const glyphs = font.charsToGlyphs(chars);
+      const unitScale = fontMatrix[0] * 1000;
+      const spaceWidth =
+        (vertical ? Math.abs(font.defaultVMetrics[0]) : font.spaceWidth) *
+        unitScale;
+      const charSpacing = vertical
+        ? -textState.charSpacing
+        : textState.charSpacing;
+      const wordSpacing = vertical
+        ? -textState.wordSpacing
+        : textState.wordSpacing;
+      const charSpacingUnits = (1000 * charSpacing) / fontSize;
+      for (let i = 0; i < glyphs.length; i++) {
+        const glyph = glyphs[i];
+        const { isWhitespace, isInvisibleFormatMark } = glyph.category;
+        const advance =
+          (vertical ? -glyph.vmetric[0] : glyph.width) * unitScale;
+        // The generated glyph has a positive extent even if W2 moves the
+        // cursor back up the column. Keep the signed advance for positioning.
+        const extent = vertical ? Math.abs(advance) : advance;
+        const spacing =
+          charSpacing +
+          (glyph.isSpace ? wordSpacing : 0) +
+          (i + 1 === glyphs.length ? extraSpacing : 0);
+        if (isWhitespace) {
+          textExtraction.fonts?.addGlyph(font, " ", extent);
+          textRuns.addSpace();
+        } else if (!isInvisibleFormatMark) {
+          const transform = getCurrentTextTransform();
+          const [a, b, c, d, x, y] = transform;
+          const endX = x + ((vertical ? -c : a) * advance) / 1000;
+          const endY = y + ((vertical ? -d : b) * advance) / 1000;
+          const unicode = disableNormalization
+            ? glyph.unicode
+            : glyph.normalizedUnicode;
+          if (
+            unicode &&
+            Math.max(x, endX) >= viewBox[0] &&
+            Math.min(x, endX) <= viewBox[2] &&
+            Math.max(y, endY) >= viewBox[1] &&
+            Math.min(y, endY) <= viewBox[3]
+          ) {
+            ensureTextStyle();
+            textRuns.addGlyph(
+              loadedName,
+              transform,
+              [(c / fontSize) * textRise, (d / fontSize) * textRise],
+              unicode,
+              extent,
+              charSpacingUnits,
+              spaceWidth,
+              vertical
+            );
+            textExtraction.fonts?.addGlyph(font, unicode, extent);
+          }
+        }
+        const distance = (advance * fontSize) / 1000 + spacing;
+        if (vertical) {
+          textState.translateTextMatrix(0, -distance);
+        } else {
+          textState.translateTextMatrix(distance * textHScale, 0);
+        }
+      }
+    }
+
     function buildTextContentItem({ chars, extraSpacing }) {
+      const font = textState.font;
+      if (
+        textRuns &&
+        textState.fontSize > 0 &&
+        textState.textHScale > 0 &&
+        textState.fontMatrix[0] > 0 &&
+        !keepWhiteSpace &&
+        !intersector
+      ) {
+        // A text state outside the run extractor may have left an item open.
+        if (textContentItem.initialized) {
+          flushTextContentItem();
+        }
+        textContentItem.prevTransform = null;
+        resetLastChars();
+        buildTextRun(chars, extraSpacing);
+        return;
+      }
+      textRuns?.reset();
       if (
         currentTextState !== textState &&
         (currentTextState.fontSize !== textState.fontSize ||
@@ -3109,7 +3205,6 @@ class PartialEvaluator {
         currentTextState = textState.clone();
       }
 
-      const font = textState.font;
       const baseCharSpacing = font.vertical
         ? -textState.charSpacing
         : textState.charSpacing;
@@ -3162,7 +3257,7 @@ class PartialEvaluator {
           // it will be done (if required) in next call to
           // compareWithLastPosition.
           // This way we can merge real spaces and spaces due to cursor moves.
-          textLayerFonts?.addGlyph(
+          textExtraction?.fonts?.addGlyph(
             font,
             " ",
             Math.abs(glyphWidth) * advanceScale
@@ -3242,7 +3337,7 @@ class PartialEvaluator {
           if (!intersector) {
             textChunk.str.push(unicode);
           }
-          textLayerFonts?.addGlyph(
+          textExtraction?.fonts?.addGlyph(
             font,
             unicode,
             isZeroWidthDiacritic ? 0 : Math.abs(glyphWidth) * advanceScale
@@ -3291,14 +3386,6 @@ class PartialEvaluator {
           resetLastChars();
           textContentItem.str.push(" ");
           lastFakeSpaceExtraCharId = intersector?.addExtraChar(" ") ?? -1;
-          if (textLayerFonts && !textContentItem.vertical) {
-            const [, , c, d] = textContentItem.transform;
-            textLayerFonts.addSpaceGap(
-              textContentItem.fontName,
-              (1000 * Math.abs(width) * textContentItem.textAdvanceScale) /
-                Math.hypot(c, d)
-            );
-          }
         }
         return false;
       }
@@ -3324,6 +3411,7 @@ class PartialEvaluator {
     }
 
     function flushTextContentItem() {
+      textRuns?.flush();
       if (!textContentItem.initialized || !textContentItem.str) {
         return;
       }
@@ -3669,7 +3757,7 @@ class PartialEvaluator {
                     viewBox,
                     lang,
                     disableNormalization,
-                    textLayerFonts,
+                    textExtraction,
                     keepWhiteSpace,
                     prevRefs: seenRefs,
                     markedContentScope: xObjMarkedContentScope,

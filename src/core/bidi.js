@@ -113,10 +113,38 @@ function createBidiText(str, isLTR, vertical = false) {
   return { str, dir };
 }
 
+function getBidiType(charCode) {
+  let charType = "L";
+  if (charCode <= 0x00ff) {
+    charType = baseTypes[charCode];
+  } else if (0x0590 <= charCode && charCode <= 0x05f4) {
+    charType = "R";
+  } else if (0x0600 <= charCode && charCode <= 0x06ff) {
+    charType = arabicTypes[charCode & 0xff];
+    if (!charType) {
+      warn("Bidi: invalid Unicode character " + charCode.toString(16));
+    }
+  } else if (0xfb1d <= charCode && charCode <= 0xfb4f) {
+    // Hebrew presentation forms have two exceptions to bidi class R.
+    if (charCode === 0xfb1e) {
+      charType = "NSM"; // Judeo-Spanish varika.
+    } else {
+      charType = charCode === 0xfb29 ? "ES" : "R"; // Alternative plus sign.
+    }
+  } else if (
+    (0x0700 <= charCode && charCode <= 0x08ac) ||
+    (0xfb50 <= charCode && charCode <= 0xfdff) ||
+    (0xfe70 <= charCode && charCode <= 0xfeff)
+  ) {
+    charType = "AL";
+  }
+  return charType;
+}
+
 // These are used in bidi(), which is called frequently. We re-use them on
 // each call to avoid unnecessary allocations.
 const chars = [];
-const types = [];
+const charTypes = [];
 
 /**
  * @param {string|Array<string>} text - Text to reorder, or glyph texts in
@@ -134,35 +162,18 @@ function bidi(text, startLevel = -1, vertical = false) {
 
   // Get types and fill arrays
   chars.length = strLength;
-  types.length = strLength;
+  charTypes.length = strLength;
   let numBidi = 0;
 
-  let i, ii;
-  for (i = 0; i < strLength; ++i) {
+  for (let i = 0; i < strLength; ++i) {
     chars[i] = str.charAt(i);
 
     const charCode = str.charCodeAt(i);
-    let charType = "L";
-    if (charCode <= 0x00ff) {
-      charType = baseTypes[charCode];
-    } else if (0x0590 <= charCode && charCode <= 0x05f4) {
-      charType = "R";
-    } else if (0x0600 <= charCode && charCode <= 0x06ff) {
-      charType = arabicTypes[charCode & 0xff];
-      if (!charType) {
-        warn("Bidi: invalid Unicode character " + charCode.toString(16));
-      }
-    } else if (
-      (0x0700 <= charCode && charCode <= 0x08ac) ||
-      (0xfb50 <= charCode && charCode <= 0xfdff) ||
-      (0xfe70 <= charCode && charCode <= 0xfeff)
-    ) {
-      charType = "AL";
-    }
+    const charType = getBidiType(charCode);
     if (charType === "R" || charType === "AL" || charType === "AN") {
       numBidi++;
     }
-    types[i] = charType;
+    charTypes[i] = charType;
   }
 
   // Detect the bidi method
@@ -184,7 +195,60 @@ function bidi(text, startLevel = -1, vertical = false) {
       startLevel = 1;
     }
   }
+  for (let i = 0; i < strLength; ++i) {
+    if (
+      charTypes[i] === "L" &&
+      str.charCodeAt(i) >= 0x0300 &&
+      NonSpacingMarkRegExp.test(chars[i])
+    ) {
+      charTypes[i] = "NSM";
+    }
+  }
+  const levels = resolveLevels(charTypes, startLevel);
+  if (glyphs) {
+    let pos = 0;
+    for (const glyph of glyphs) {
+      const end = pos + glyph.length;
+      if (
+        glyph.length > 1 &&
+        findUnequal(levels, pos + 1, levels[pos], end) === end
+      ) {
+        // Store the whole glyph in one slot. Empty strings in the remaining
+        // slots preserve the indices used by the character levels.
+        chars[pos] = glyph;
+        chars.fill("", pos + 1, end);
+      }
+      pos = end;
+    }
+  }
+
+  reorderByLevel(chars, levels);
+
+  /*
+   L3. Combining marks applied to a right-to-left base character will at this
+   point precede their base character. If the rendering engine expects them to
+   follow the base characters in the final display process, then the ordering
+   of the marks and the base character must be reversed.
+   */
+
+  // don't bother for now
+
+  /*
+   L4. A character that possesses the mirrored property as specified by
+   Section 4.7, Mirrored, must be depicted by a mirrored glyph if the resolved
+   directionality of that character is R.
+   */
+
+  // don't mirror as characters are already mirrored in the pdf
+
+  // Finally, return string
+  return createBidiText(chars.join("").replaceAll(/[<>]/g, ""), isLTR);
+}
+
+function resolveLevels(types, startLevel) {
+  const strLength = types.length;
   const levels = new Array(strLength).fill(startLevel);
+  let i;
 
   /*
    X1-X10: skip most of this, since we are NOT doing the embeddings.
@@ -200,12 +264,7 @@ function bidi(text, startLevel = -1, vertical = false) {
    */
   let lastType = sor;
   for (i = 0; i < strLength; ++i) {
-    if (
-      types[i] === "NSM" ||
-      (types[i] === "L" &&
-        str.charCodeAt(i) >= 0x0300 &&
-        NonSpacingMarkRegExp.test(chars[i]))
-    ) {
+    if (types[i] === "NSM") {
       types[i] = lastType;
     } else {
       lastType = types[i];
@@ -381,25 +440,13 @@ function bidi(text, startLevel = -1, vertical = false) {
     }
   }
 
-  /*
-   L1. On each line, reset the embedding level of the following characters to
-   the paragraph embedding level:
+  return levels;
+}
 
-   segment separators,
-   paragraph separators,
-   any sequence of whitespace characters preceding a segment separator or
-   paragraph separator, and any sequence of white space characters at the end
-   of the line.
-   */
-
-  // don't bother as text is only single line
-
-  /*
-   L2. From the highest level found in the text to the lowest odd level on
-   each line, reverse any contiguous sequence of characters that are at that
-   level or higher.
-   */
-
+// L2. Reverse contiguous sequences at successively lower embedding levels.
+// Each input is a single line, with line breaks handled by the caller.
+function reorderByLevel(values, levels) {
+  let i, ii;
   // find highest level & lowest odd level
   let highestLevel = -1;
   let lowestOddLevel = 99;
@@ -414,23 +461,6 @@ function bidi(text, startLevel = -1, vertical = false) {
     }
   }
 
-  if (glyphs) {
-    let pos = 0;
-    for (const glyph of glyphs) {
-      const end = pos + glyph.length;
-      if (
-        glyph.length > 1 &&
-        findUnequal(levels, pos + 1, levels[pos], end) === end
-      ) {
-        // Store the whole glyph in one slot. Empty strings in the remaining
-        // slots preserve the indices used by the character levels.
-        chars[pos] = glyph;
-        chars.fill("", pos + 1, end);
-      }
-      pos = end;
-    }
-  }
-
   // now reverse between those limits
   for (level = highestLevel; level >= lowestOddLevel; --level) {
     // find segments to reverse
@@ -438,7 +468,7 @@ function bidi(text, startLevel = -1, vertical = false) {
     for (i = 0, ii = levels.length; i < ii; ++i) {
       if (levels[i] < level) {
         if (start >= 0) {
-          reverseValues(chars, start, i);
+          reverseValues(values, start, i);
           start = -1;
         }
       } else if (start < 0) {
@@ -446,29 +476,63 @@ function bidi(text, startLevel = -1, vertical = false) {
       }
     }
     if (start >= 0) {
-      reverseValues(chars, start, levels.length);
+      reverseValues(values, start, levels.length);
     }
   }
-
-  /*
-   L3. Combining marks applied to a right-to-left base character will at this
-   point precede their base character. If the rendering engine expects them to
-   follow the base characters in the final display process, then the ordering
-   of the marks and the base character must be reversed.
-   */
-
-  // don't bother for now
-
-  /*
-   L4. A character that possesses the mirrored property as specified by
-   Section 4.7, Mirrored, must be depicted by a mirrored glyph if the resolved
-   directionality of that character is R.
-   */
-
-  // don't mirror as characters are already mirrored in the pdf
-
-  // Finally, return string
-  return createBidiText(chars.join("").replaceAll(/[<>]/g, ""), isLTR);
 }
 
-export { bidi };
+// A run containing letters already has a resolved direction. Digits and
+// punctuation alone depend on the surrounding runs, even across font changes.
+function getRunBidiType({ str, dir }) {
+  const letter = str.search(/\p{L}/u);
+  if (letter >= 0) {
+    if (dir !== "rtl") {
+      return "L";
+    }
+    return getBidiType(str.codePointAt(letter)) === "AL" ? "AL" : "R";
+  }
+  const digit = str.search(/\p{Nd}/u);
+  if (digit >= 0) {
+    return getBidiType(str.codePointAt(digit)) === "AN" ? "AN" : "EN";
+  }
+  if (str.length === 1) {
+    const type = getBidiType(str.charCodeAt(0));
+    if (type !== "L") {
+      return type;
+    }
+    if (/\p{Sc}/u.test(str)) {
+      return "ET";
+    }
+  }
+  return "ON";
+}
+
+function isStrongBidiType(type) {
+  return type === "L" || type === "R" || type === "AL";
+}
+
+// Within each run the characters are already in reading order.
+// Apply the same weak/neutral resolution and level reversals to whole items.
+function reorderBidiRuns(runs) {
+  if (
+    runs.length < 2 ||
+    !runs.some(({ type }) => type === "R" || type === "AL")
+  ) {
+    return;
+  }
+  // When the outermost strong runs agree, they establish the baseline's
+  // direction. Mixed ends are ambiguous in visual order; keep the LTR base.
+  const types = runs.map(run => run.type);
+  const rtl =
+    types.find(isStrongBidiType) !== "L" &&
+    types.findLast(isStrongBidiType) !== "L";
+  const levels = resolveLevels(types, Number(rtl));
+  for (let i = 0; i < runs.length; i++) {
+    if (runs[i].item.str === " ") {
+      runs[i].item.dir = isOdd(levels[i]) ? "rtl" : "ltr";
+    }
+  }
+  reorderByLevel(runs, levels);
+}
+
+export { bidi, getRunBidiType, isStrongBidiType, reorderBidiRuns };

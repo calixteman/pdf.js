@@ -59,6 +59,8 @@ class TextLayer {
 
   #container = null;
 
+  #ctx = null;
+
   #disableProcessItems = false;
 
   #fontInspectorEnabled = !!globalThis.FontInspector?.enabled;
@@ -69,7 +71,7 @@ class TextLayer {
 
   #lang = null;
 
-  #layoutTextParams = null;
+  #newTextLayer = false;
 
   #ownerDocument;
 
@@ -132,20 +134,14 @@ class TextLayer {
 
     this.#imagesHandler = images;
 
-    this.#scale = viewport.scale * this.#pixelRatio;
+    this.#scale = viewport.scale * viewport.userUnit;
     this.#rotation = viewport.rotation;
-    this.#layoutTextParams = {
-      div: null,
-      properties: null,
-      ctx: null,
-    };
     const { pageWidth, pageHeight, pageX, pageY } = viewport.rawDims;
     this.#transform = [1, 0, 0, -1, -pageX, pageY + pageHeight];
     this.#pageWidth = pageWidth;
     this.#pageHeight = pageHeight;
 
     TextLayer.#ensureMinFontSizeComputed();
-    container.style.setProperty("--min-font-size", TextLayer.#minFontSize);
 
     setLayerDimensions(container, viewport);
 
@@ -153,7 +149,7 @@ class TextLayer {
     this.#capability.promise
       .finally(() => {
         TextLayer.#pendingTextLayers.delete(this);
-        this.#layoutTextParams = null;
+        this.#ctx = null;
         this.#styleCache = null;
       })
       .catch(noopFn);
@@ -222,6 +218,15 @@ class TextLayer {
           if (!this.#reader) {
             break;
           }
+          if (
+            !this.#newTextLayer &&
+            this.#fonts
+              .values()
+              .some(({ fontFace }) => fontFace.status === "loaded")
+          ) {
+            this.#newTextLayer = true;
+            this.#rootContainer.classList.add("newTextLayer");
+          }
         }
         this.#processItems(value.items);
       }
@@ -238,17 +243,14 @@ class TextLayer {
    * @returns {undefined}
    */
   update({ viewport }) {
-    const scale = viewport.scale * OutputScale.pixelRatio;
     const rotation = viewport.rotation;
 
     if (rotation !== this.#rotation) {
       this.#rotation = rotation;
       setLayerDimensions(this.#rootContainer, { rotation });
     }
-    if (scale !== this.#scale) {
-      this.#scale = scale;
-      this.#pixelRatio = OutputScale.pixelRatio;
-    }
+    this.#scale = viewport.scale * viewport.userUnit;
+    this.#pixelRatio = OutputScale.pixelRatio;
   }
 
   /**
@@ -272,6 +274,7 @@ class TextLayer {
       }
     }
     this.#fonts.clear();
+    this.#rootContainer.classList.remove("newTextLayer");
   }
 
   /**
@@ -320,8 +323,8 @@ class TextLayer {
   }
 
   /**
-   * @type {Array<string>} Strings that correspond to the `str` property of
-   *   the text items of the textContent input.
+   * @type {Array<string>} Strings rendered for the text items of the
+   *   textContent input.
    *   This is output and will initially be set to an empty array
    */
   get textContentItemsStr() {
@@ -332,13 +335,7 @@ class TextLayer {
     if (this.#disableProcessItems) {
       return;
     }
-    this.#layoutTextParams.ctx ??= TextLayer.#getCtx(
-      this.#ownerDocument,
-      this.#lang
-    );
-
-    const textDivs = this.#textDivs,
-      textContentItemsStr = this.#textContentItemsStr;
+    const textDivs = this.#textDivs;
 
     for (const item of items) {
       // No point in rendering many divs as it would make the browser
@@ -370,7 +367,6 @@ class TextLayer {
         }
         continue;
       }
-      textContentItemsStr.push(item.str);
       this.#appendText(item);
     }
   }
@@ -378,72 +374,153 @@ class TextLayer {
   #appendText(geom) {
     // Initialize all used properties to keep the caches monomorphic.
     const textDiv = this.#ownerDocument.createElement("span");
+    const isSpace = geom.str === " ";
     const textDivProperties = {
-      angle: 0,
+      ux: 1,
+      uy: 0,
+      vx: 0,
+      vy: 1,
       canvasWidth: 0,
       hasText: geom.str !== "",
       hasEOL: geom.hasEOL,
       fontSize: 0,
+      fontAdvance: 0,
+      scaleX: 1,
     };
     this.#textDivs.push(textDiv);
 
-    const tx = Util.transform(this.#transform, geom.transform);
-    let angle = Math.atan2(tx[1], tx[0]);
     const style = this.#styleCache[geom.fontName];
-    if (style.vertical) {
-      angle += Math.PI / 2;
-    }
-
-    let fontFamily =
-      (this.#fontInspectorEnabled && style.fontSubstitution) ||
-      style.fontFamily;
-
-    // Workaround for bug 1922063.
-    fontFamily = TextLayer.fontFamilyMap.get(fontFamily) || fontFamily;
-    let ascent;
     const { textLayerFont } = style;
-    if (
+    let fontFamily,
+      ascent,
+      advanceScale = 1,
+      useGlyphSpacing = false,
+      nativeColumn = false;
+    const hasTextLayerFont =
       textLayerFont &&
-      this.#fonts.get(textLayerFont.name)?.fontFace.status === "loaded"
-    ) {
-      // The other fonts are only used for the characters missing in it.
-      fontFamily = `"${textLayerFont.name}", ${fontFamily}`;
+      this.#fonts.get(textLayerFont.name)?.fontFace.status === "loaded";
+    if (hasTextLayerFont) {
+      fontFamily = `"${textLayerFont.name}"`;
       ascent = textLayerFont.ascent;
+      advanceScale = textLayerFont.advanceScale ?? 1;
+      textDivProperties.fontAdvance =
+        (geom.textLayerAdvance ?? 0) / advanceScale;
+      useGlyphSpacing = !isSpace && geom.letterSpacing !== undefined;
+      nativeColumn =
+        textLayerFont.vertical &&
+        (useGlyphSpacing || isSpace || textDivProperties.fontAdvance > 0);
+    } else {
+      fontFamily =
+        (this.#fontInspectorEnabled && style.fontSubstitution) ||
+        style.fontFamily;
+      // Workaround for bug 1922063.
+      fontFamily = TextLayer.fontFamilyMap.get(fontFamily) || fontFamily;
     }
-    const fontHeight = Math.hypot(tx[2], tx[3]);
+    const tx = Util.transform(this.#transform, geom.transform);
+    const width = Math.hypot(tx[0], tx[1]);
+    const height = Math.hypot(tx[2], tx[3]);
+    const fontHeight = nativeColumn ? width : height;
+    if (
+      (nativeColumn && width) ||
+      (!style.vertical && tx[0] * tx[3] - tx[1] * tx[2] < 0)
+    ) {
+      // CSS x follows PDF x, CSS y follows PDF -y. In vertical writing the
+      // font size sets the column thickness, and glyphs advance along y.
+      textDivProperties.ux = tx[0] / width;
+      textDivProperties.uy = tx[1] / width;
+      textDivProperties.vx = -tx[2] / fontHeight;
+      textDivProperties.vy = -tx[3] / fontHeight;
+      const { fontAdvance } = textDivProperties;
+      if (nativeColumn) {
+        const scale =
+          fontAdvance && height
+            ? geom.height / (fontAdvance * height)
+            : advanceScale;
+        textDivProperties.vx *= scale;
+        textDivProperties.vy *= scale;
+      }
+    } else {
+      // Keep the existing orientation for vertical and mirrored text.
+      const angle =
+        Math.atan2(tx[1], tx[0]) + (style.vertical ? Math.PI / 2 : 0);
+      if (angle !== 0) {
+        textDivProperties.ux = textDivProperties.vy = Math.cos(angle);
+        textDivProperties.uy = Math.sin(angle);
+        textDivProperties.vx = -textDivProperties.uy;
+      }
+    }
+
     const fontAscent =
       fontHeight *
-      (ascent ??
-        TextLayer.#getAscent(fontFamily, style, this.#layoutTextParams.ctx));
+      (ascent ?? TextLayer.#getAscent(fontFamily, style, this.#getCtx()));
 
-    let left, top;
-    if (angle === 0) {
-      left = tx[4];
-      top = tx[5] - fontAscent;
-    } else {
-      left = tx[4] + fontAscent * Math.sin(angle);
-      top = tx[5] - fontAscent * Math.cos(angle);
-    }
+    const { ux, uy, vx, vy } = textDivProperties;
+    const left = tx[4] - fontAscent * (nativeColumn ? ux : vx);
+    const top = tx[5] - fontAscent * (nativeColumn ? uy : vy);
 
     const divStyle = textDiv.style;
-    // Setting the style properties individually, rather than all at once,
-    // should be OK since the `textDiv` isn't appended to the document yet.
+    // The canvas fits the page into its rounded width and height. Percentages
+    // keep text origins aligned with it when either dimension rounds down.
     divStyle.left = `${((100 * left) / this.#pageWidth).toFixed(3)}%`;
     divStyle.top = `${((100 * top) / this.#pageHeight).toFixed(3)}%`;
-    // The text is laid out with the rounded value, hence keep it around in
-    // order to measure the text with the very same size, see `#layout`.
-    const roundedFontHeight = Math.round(fontHeight * 100) / 100;
-    divStyle.setProperty("--font-height", `${roundedFontHeight}px`);
+    // Use significant digits for fitted text so even tiny fonts keep their
+    // relative precision.
+    const fontSize =
+      useGlyphSpacing || nativeColumn
+        ? Number(fontHeight.toPrecision(5))
+        : Math.round(fontHeight * 100) / 100;
+    // Bypass the browser's minimum font size. Firefox also rounds vertical
+    // advances to pixels. Lay out its columns at PDF glyph precision (1000
+    // units per em) so rounding doesn't accumulate down the column.
+    let fontSizeScale = TextLayer.#minFontSize;
+    if (nativeColumn && FeatureTest.platform.isFirefox && fontSize > 0) {
+      fontSizeScale = 1000 / (fontSize * this.#pixelRatio);
+      // Zoom the fitted column with a transform so its layout font stays at
+      // the same size, even when the viewer zoom changes after rendering.
+      divStyle.zoom = "calc(1 / var(--layer-zoom, 1))";
+      divStyle.scale = "var(--layer-zoom, 1)";
+      // Highlight decorations are sized in screen pixels within this span.
+      divStyle.setProperty(
+        "--text-layer-screen-px",
+        `calc(${fontSizeScale}px / var(--layer-zoom))`
+      );
+    }
+    divStyle.fontSize = `${fontSize * fontSizeScale}px`;
     divStyle.fontFamily = fontFamily;
+    if (useGlyphSpacing) {
+      // Round in page units before compensating for the font advance scale.
+      const spacingDivisor = 1000 * advanceScale;
+      const letterSpacing =
+        Math.round(geom.letterSpacing * fontSize * 1000) / spacingDivisor;
+      const wordSpacing =
+        Math.round(geom.wordSpacing * fontSize * 1000) / spacingDivisor;
+      if (letterSpacing) {
+        divStyle.letterSpacing = `${letterSpacing * fontSizeScale}px`;
+      }
+      if (wordSpacing) {
+        divStyle.wordSpacing = `${wordSpacing * fontSizeScale}px`;
+      }
+      if (!nativeColumn && fontHeight > 0) {
+        textDivProperties.scaleX = (width / fontHeight) * advanceScale;
+      }
+    }
 
-    textDivProperties.fontSize = roundedFontHeight;
+    textDivProperties.fontSize = fontSize;
 
     // Keeps screen readers from pausing on every new text span.
     textDiv.setAttribute("role", "presentation");
 
-    textDiv.textContent = geom.str;
-    // geom.dir may be 'ttb' for vertical texts.
-    textDiv.dir = geom.dir;
+    // Find uses the rendered string to restore highlighting. Each substituted
+    // space is one code unit, so offsets still match the extracted text.
+    const str = useGlyphSpacing ? (geom.textLayerStr ?? geom.str) : geom.str;
+    this.#textContentItemsStr.push(str);
+    textDiv.textContent = str;
+    if (nativeColumn) {
+      textDiv.classList.add("vertical");
+      textDiv.dir = "ltr"; // In vertical-rl, the inline direction is top to bottom.
+    } else {
+      textDiv.dir = geom.dir;
+    }
 
     // `fontName` is only used by the FontInspector, and we only use `dataset`
     // here to make the font name available in the debugger.
@@ -451,16 +528,16 @@ class TextLayer {
       textDiv.dataset.fontName =
         style.fontSubstitutionLoadedName || geom.fontName;
     }
-    if (angle !== 0) {
-      textDivProperties.angle = angle * (180 / Math.PI);
-    }
-    // We don't bother scaling single-char text divs, because it has very
-    // little effect on text highlighting. This makes scrolling on docs with
-    // lots of such divs a lot faster.
+    // Different PDF glyphs can map to the same character. The generated font
+    // has one advance for it, so even an isolated glyph may need width fitting.
     let shouldScaleText = false;
-    if (geom.str.length > 1) {
+    if (
+      geom.str.length > 1 ||
+      textDivProperties.fontAdvance > 0 ||
+      (!isSpace && hasTextLayerFont)
+    ) {
       shouldScaleText = true;
-    } else if (geom.str !== " " && geom.transform[0] !== geom.transform[3]) {
+    } else if (!isSpace && geom.transform[0] !== geom.transform[3]) {
       const absScaleX = Math.abs(geom.transform[0]),
         absScaleY = Math.abs(geom.transform[3]);
       // When the horizontal/vertical scaling differs significantly, also scale
@@ -472,14 +549,15 @@ class TextLayer {
         shouldScaleText = true;
       }
     }
-    if (shouldScaleText) {
+    if (shouldScaleText && !useGlyphSpacing && !nativeColumn) {
       textDivProperties.canvasWidth = style.vertical ? geom.height : geom.width;
+      if (!textDivProperties.canvasWidth && textDivProperties.fontAdvance > 0) {
+        textDivProperties.scaleX = 0;
+      }
     }
 
     // Finally, layout and append the text to the DOM.
-    this.#layoutTextParams.div = textDiv;
-    this.#layoutTextParams.properties = textDivProperties;
-    this.#layout(this.#layoutTextParams);
+    this.#layout(textDiv, textDivProperties, fontSizeScale);
 
     if (textDivProperties.hasText) {
       this.#container.append(textDiv);
@@ -491,33 +569,48 @@ class TextLayer {
     }
   }
 
-  #layout(params) {
-    const { div, properties, ctx } = params;
+  #layout(div, properties, fontSizeScale) {
     const { style } = div;
-    const { canvasWidth, fontSize } = properties;
+    const { canvasWidth, fontSize, fontAdvance, ux, uy, vx, vy } = properties;
+    let { scaleX } = properties;
 
     if (canvasWidth !== 0 && fontSize !== 0 && properties.hasText) {
-      const { fontFamily } = style;
-      // Firefox quantizes canvas font sizes after dividing by the device-pixel
-      // ratio. Measure at a quantized size, then rescale the width.
-      const pixelRatio = this.#pixelRatio;
-      const measuredSize =
-        TextLayer.#quantizeFontSize((fontSize * this.#scale) / pixelRatio) *
-        pixelRatio;
+      let width = fontAdvance * fontSize;
+      if (!(width > 0 && Number.isFinite(width))) {
+        // Firefox quantizes font sizes after dividing by the device-pixel
+        // ratio. Measure at a quantized size, then rescale the width.
+        const measuredSize =
+          TextLayer.#quantizeFontSize(fontSize * this.#scale) *
+          this.#pixelRatio;
 
-      TextLayer.#ensureCtxFont(ctx, measuredSize, fontFamily);
-      // Only measure the width for multi-char text divs, see `appendText`.
-      const { width } = ctx.measureText(div.textContent);
+        const ctx = this.#getCtx();
+        // Match the layer's kerning setting on the shared measurement canvas.
+        const kerning = this.#newTextLayer ? "normal" : "auto";
+        if (ctx.fontKerning !== kerning) {
+          ctx.fontKerning = kerning;
+        }
+        TextLayer.#ensureCtxFont(ctx, measuredSize, style.fontFamily);
+        width =
+          (ctx.measureText(div.textContent).width * fontSize) / measuredSize;
+      }
 
-      if (width > 0) {
-        style.setProperty(
-          "--scale-x",
-          (canvasWidth * measuredSize) / (width * fontSize)
-        );
+      // Bound the error at the end of the span in page units.
+      if (width > 0 && Math.abs(canvasWidth - width) > 0.01) {
+        scaleX = canvasWidth / width;
       }
     }
-    if (properties.angle !== 0) {
-      style.setProperty("--rotate", `${properties.angle}deg`);
+    // A span with the right size and orientation needs no transform.
+    const scaleY = 1 / fontSizeScale;
+    scaleX *= scaleY;
+    if (
+      ux !== 1 ||
+      uy !== 0 ||
+      vx !== 0 ||
+      vy !== 1 ||
+      scaleX !== 1 ||
+      scaleY !== 1
+    ) {
+      style.transform = `matrix(${ux * scaleX},${uy * scaleX},${vx * scaleY},${vy * scaleY},0,0)`;
     }
   }
 
@@ -537,12 +630,17 @@ class TextLayer {
     this.#canvasContexts.clear();
   }
 
-  static #getCtx(ownerDocument, lang = null) {
-    const contexts = this.#canvasContexts.getOrInsertComputed(
+  #getCtx() {
+    if (this.#ctx) {
+      return this.#ctx;
+    }
+    const ownerDocument = this.#ownerDocument;
+    const lang = this.#lang || "";
+    const contexts = TextLayer.#canvasContexts.getOrInsertComputed(
       ownerDocument,
       makeMap
     );
-    let ctx = contexts.get((lang ||= ""));
+    let ctx = contexts.get(lang);
     if (!ctx) {
       // We don't use an OffscreenCanvas here because we use serif/sans serif
       // fonts with it and they depends on the locale.
@@ -568,13 +666,13 @@ class TextLayer {
 
       // Also, initialize state for the `#ensureCtxFont` method.
       // Resizing the canvas resets ctx.font but leaves this cache stale.
-      this.#canvasCtxFonts.set(ctx, {
+      TextLayer.#canvasCtxFonts.set(ctx, {
         size: 0,
         family: "",
         ascents: new Map(),
       });
     }
-    return ctx;
+    return (this.#ctx = ctx);
   }
 
   // Match Firefox's 7-bit `QuantizeFontSize` implementation:

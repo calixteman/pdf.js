@@ -617,7 +617,7 @@ const defaultOptions = new Map([
     {
       // 1 to enable, 2 to enable with the glyph boxes drawn, else disabled.
       /** @type {number} */
-      value: 1,
+      value: 2,
       kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
     },
   ],

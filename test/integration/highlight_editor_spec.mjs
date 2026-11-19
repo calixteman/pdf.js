@@ -1469,6 +1469,13 @@ describe("Highlight Editor", () => {
           });
 
           const toolbarRect = await getRect(page, ".textLayer .editToolbar");
+          const toolbarHeight = await page.$eval(
+            ".textLayer .editToolbar",
+            el => el.offsetHeight
+          );
+          expect(toolbarRect.height)
+            .withContext(`Toolbar height in ${browserName}`)
+            .toBeCloseTo(toolbarHeight, 0);
 
           // In RTL, the left edge of the toolbar is aligned on the left edge
           // of the selection (bug 2060032).

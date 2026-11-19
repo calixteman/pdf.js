@@ -35,6 +35,8 @@ import {
 import {
   assemblePdf,
   buildGetDocumentParams,
+  buildTextPdf,
+  buildVerticalTextPdf,
   CMAP_URL,
   DefaultBinaryDataFactory,
   DefaultFileReaderFactory,
@@ -5311,84 +5313,458 @@ page 1 / 3`);
         disableNormalization: true,
         includeTextLayerFonts: true,
       });
-      expect(items).toEqual(textContent.items);
-      const item = items.find(({ str }) => str === "identi\ufb01es");
+      const { items: unstyledItems } = await pdfPage.getTextContent({
+        disableNormalization: true,
+        useTextLayerExtraction: true,
+      });
+      expect(mergeText(items)).toEqual(mergeText(unstyledItems));
+      const item = items.find(({ str }) => str === "identi\ufb01es ");
       const { textLayerFont } = styles[item.fontName];
       expect(textLayerFont.name).toMatch(/^g_d\d+_tf\d+$/);
       expect(textLayerFont.ascent).toBeGreaterThan(0.5);
       expect(textLayerFont.ascent).toBeLessThan(0.95);
 
-      // The advances of the font are the ones of the PDF font.
       const font = new FontTestData(textLayerFont.data);
       let advance = 0;
       for (const char of item.str) {
         advance += font.getAdvance(char.codePointAt(0));
       }
       const fontSize = Math.hypot(item.transform[2], item.transform[3]);
-      expect((advance * fontSize) / 1000).toBeCloseTo(item.width, 0);
+      expect((advance / 1000 + item.wordSpacing) * fontSize).toBeCloseTo(
+        item.width,
+        0
+      );
 
       await loadingTask.destroy();
     });
 
-    it("gets text content, with the gaps as spaces in the fonts of the text layer", async function () {
-      const content =
-        "BT /F1 20 Tf 10 150 Td [(A) -300 (B) -300 (A) -400 (B)] TJ ET";
-      const loadingTask = getDocument({
-        data: assemblePdf([
-          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-          "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-          "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] " +
-            "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\n" +
-            "endobj\n",
-          `4 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\n` +
-            "endstream\nendobj\n",
-          "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica " +
-            "/Encoding /WinAnsiEncoding >>\nendobj\n",
-        ]),
-      });
+    it("positions text after an overprinted accent in the text layer", async function () {
+      const loadingTask = getDocument(tracemonkeyGetDocumentParams);
       const pdfDoc = await loadingTask.promise;
-      const pdfPage = await pdfDoc.getPage(1);
-      const { items, styles } = await pdfPage.getTextContent({
-        includeTextLayerFonts: true,
-      });
-
-      expect(items.map(({ str }) => str)).toEqual(["A B A B"]);
-      // No space is drawn: the spaces get the median gap.
-      const font = new FontTestData(
-        styles[items[0].fontName].textLayerFont.data
-      );
-      expect(font.getAdvance(0x20)).toBeCloseTo(300, 0);
-      expect(font.getAdvance(0x41)).toBeCloseTo(667, 0);
-
-      await loadingTask.destroy();
-    });
-
-    it("gets text content, with the fonts of the text layer for a vertical text", async function () {
-      const loadingTask = getDocument(
-        buildGetDocumentParams("vertical.pdf", {
-          cMapUrl: CMAP_URL,
-          useWorkerFetch: false,
-        })
-      );
-      const pdfDoc = await loadingTask.promise;
-      const pdfPage = await pdfDoc.getPage(1);
-      const { items, styles } = await pdfPage.getTextContent({
+      const pdfPage = await pdfDoc.getPage(2);
+      const { items } = await pdfPage.getTextContent({
         disableNormalization: true,
         includeTextLayerFonts: true,
       });
 
-      const item = items.find(
-        ({ str }) => str === "\u3042\u3044\u3046\u3048\u304a"
-      );
-      const { vertical, textLayerFont } = styles[item.fontName];
-      expect(vertical).toBeTrue();
-      // Centered on the column, with the vertical advances.
-      expect(textLayerFont.ascent).toEqual(0.5);
-      expect(
-        new FontTestData(textLayerFont.data).getAdvance(0x3042)
-      ).toBeCloseTo(1000, 0);
+      const index = items.findIndex(({ str }) => str === "a na\u00a8");
+      const item = items[index + 1];
+      expect(item.str).toMatch(/^\u0131ve implementation, inner loops/);
+      expect(item.transform[4]).toBeCloseTo(69.6272, 4);
+      expect(item.letterSpacing).toBeDefined();
+      expect(items[index].hasEOL).toBeFalse();
 
       await loadingTask.destroy();
+    });
+
+    describe("text layer extraction", function () {
+      let loadingTask;
+      async function loadPage(params) {
+        loadingTask = getDocument(params);
+        return (await loadingTask.promise).getPage(1);
+      }
+
+      afterEach(async function () {
+        await loadingTask?.destroy();
+        loadingTask = null;
+      });
+
+      function loadTextPage(content, fontEntries) {
+        return loadPage({ data: buildTextPdf(content, fontEntries) });
+      }
+
+      function fontEncoding(widths, glyphNames, firstChar = 128) {
+        return (
+          `/FirstChar ${firstChar} /LastChar ${firstChar + widths.length - 1} ` +
+          `/Widths [${widths.join(" ")}] /Encoding << /BaseEncoding /WinAnsiEncoding ` +
+          `/Differences [128 ${glyphNames}] >>`
+        );
+      }
+      const hebrewLetters = "/afii57664 /afii57665 /afii57666 /afii57667";
+      const hebrewFont = fontEncoding([500, 500, 500, 500], hebrewLetters);
+
+      async function getItems(pdfPage, includeTextLayerFonts, options) {
+        const { items } = await pdfPage.getTextContent({
+          useTextLayerExtraction: true,
+          includeTextLayerFonts,
+          ...options,
+        });
+        return items;
+      }
+
+      function expectKerning(font, left, right, advance) {
+        const pairs = font.getKerningPairs();
+        expect(pairs.length).toBe(1);
+        const [[leftId, rightId, value]] = pairs;
+        expect(leftId).toBe(font.getGlyphId(left));
+        expect(rightId).toBe(font.getGlyphId(right));
+        expect(value).toBeCloseTo(advance, 0);
+      }
+
+      it("fits alternate glyph widths for the same Unicode character", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td <808180818081> Tj 0 -30 Td <8283> Tj ET",
+          fontEncoding([500, 550, 600, 450], "/A /B /A /B")
+        );
+
+        const { items } = await pdfPage.getTextContent({
+          includeTextLayerFonts: true,
+        });
+        expect(items.map(item => item.str)).toEqual(["ABABAB", "A", "B"]);
+        const [, a, b] = items;
+        expect(a.width).toBeCloseTo(12);
+        expect(b.width).toBeCloseTo(9);
+        expect(a.textLayerAdvance).toBeCloseTo(0.5, 3);
+        expect(b.textLayerAdvance).toBeCloseTo(0.55, 3);
+      });
+
+      it("kerns across a combining mark in the text layer", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td [(\\200\\201) 100 (\\202)] TJ ET",
+          fontEncoding([667, 0, 667], "/A /acutecomb /V")
+        );
+
+        const { items, styles } = await pdfPage.getTextContent({
+          disableNormalization: true,
+          includeTextLayerFonts: true,
+        });
+
+        expect(items.length).toBe(1);
+        const [item] = items;
+        expect(item.str).toEqual("A\u0301V");
+        expect(item.width).toBeCloseTo(24.68, 2);
+        expect(item.letterSpacing).toBe(0);
+        const font = new FontTestData(styles[item.fontName].textLayerFont.data);
+        expectKerning(font, 0x41, 0x56, -100);
+      });
+
+      it("groups Arabic glyphs drawn from right to left in reading order", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 100 150 Td [(\\200) 800 (\\201) 950 (\\202\\203)] TJ ET",
+          fontEncoding(
+            [500, 300, 400, 0],
+            "/uniFEB3 /uniFEF4 /uniFC0E /uni064E"
+          )
+        );
+
+        for (const includeTextLayerFonts of [false, true]) {
+          for (const disableNormalization of [false, true]) {
+            const items = await getItems(pdfPage, includeTextLayerFonts, {
+              disableNormalization,
+            });
+            expect(items.length).toBe(1);
+            const [item] = items;
+            expect(item.dir).toBe("rtl");
+            expect(item.str).toBe(
+              disableNormalization
+                ? "\ufeb3\ufef4 \ufc0e\u064e"
+                : "\ufeb3\ufef4 تمَ"
+            );
+            // The three glyphs start at x = 100, 94 and 81. The last one
+            // carries a mark and is separated from its neighbor by 5 pt.
+            expect(item.transform[4]).toBeCloseTo(81, 6);
+            expect(item.width).toBeCloseTo(29, 6);
+            if (includeTextLayerFonts && disableNormalization) {
+              expect(item.letterSpacing).toBe(0);
+            }
+          }
+        }
+      });
+
+      it("kerns RTL glyphs in visual order and exposes text in logical order", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td [(\\200) 100 (\\201\\200)] TJ " +
+            "0 -40 Td [(\\200) 100 (\\201)] TJ ET",
+          hebrewFont
+        );
+
+        const { items, styles } = await pdfPage.getTextContent({
+          includeTextLayerFonts: true,
+        });
+
+        expect(
+          items.map(({ str, dir, letterSpacing }) => [str, dir, letterSpacing])
+        ).toEqual([
+          ["\u05d0\u05d1\u05d0", "rtl", 0],
+          ["\u05d1\u05d0", "rtl", 0],
+        ]);
+        const font = new FontTestData(
+          styles[items[0].fontName].textLayerFont.data
+        );
+        expectKerning(font, 0x05d0, 0x05d1, -100);
+      });
+
+      it("attaches spaces in RTL reading order and keeps mixed-direction gaps separate", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td [<8081> -900 <8081>] TJ " +
+            "1 0 0 1 90 150 Tm /F1 18 Tf (-) Tj <8081> Tj " +
+            "1 0 0 1 135 150 Tm /F1 20 Tf (AB) Tj ET",
+          hebrewFont
+        );
+
+        const plain = await getItems(pdfPage, false);
+        const fitted = await getItems(pdfPage, true);
+        const spaceDirections = items =>
+          items.filter(item => item.str === " ").map(item => item.dir);
+        expect(spaceDirections(plain)).toEqual(["rtl", "ltr"]);
+        expect(spaceDirections(fitted)).toEqual(["ltr"]);
+        // Both the gap within the split run and the gap at the font change
+        // start at the right edge of a Hebrew span.
+        expect(
+          fitted.map(item => item.str).filter(str => str.startsWith(" "))
+        ).toEqual([" בא", " בא", " "]);
+      });
+
+      it("prepends the gap at the right edge of an RTL table cell", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td [<8081> -250 <8081>] TJ " +
+            "/F1 18 Tf 1 0 0 1 130 150 Tm <80> Tj ET",
+          hebrewFont
+        );
+
+        const plain = await getItems(pdfPage, false);
+        expect(plain.map(item => item.str)).toEqual([" ", "בא בא", "א"]);
+        const fitted = await getItems(pdfPage, true);
+        expect(fitted.map(item => item.str)).toEqual([" בא בא", "א"]);
+        const [cell, next] = fitted;
+        expect(cell.textLayerStr).toBe("\u2002בא בא");
+        expect(cell.transform[4]).toBe(10);
+        expect(cell.transform[4] + cell.width).toBeCloseTo(
+          next.transform[4],
+          6
+        );
+      });
+
+      it("reads a number and a space before the RTL heading on their left", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 1 Tc 10 150 Td <8081> Tj " +
+            "/F1 14 Tf 0 Tc 1 0 0 1 100 150 Tm (12) Tj ET",
+          fontEncoding([500, 500], "/uniFB4B /uniFB2A")
+        );
+
+        const options = { disableNormalization: true };
+        const plain = await getItems(pdfPage, false, options);
+        const fitted = await getItems(pdfPage, true, options);
+        const textAndDirection = ({ str, dir }) => [str, dir];
+        expect(plain.map(textAndDirection)).toEqual([
+          ["12", "ltr"],
+          [" ", "rtl"],
+          ["\ufb2a\ufb4b", "rtl"],
+        ]);
+        expect(fitted.map(textAndDirection)).toEqual([
+          ["12", "ltr"],
+          [" \ufb2a\ufb4b", "rtl"],
+        ]);
+        const [, heading] = fitted;
+        expect(heading.letterSpacing).toBeCloseTo(0.05, 5);
+        expect(heading.transform[4] + heading.width).toBeCloseTo(100, 5);
+      });
+
+      it("orders RTL lines independently of font changes inside numbers and Latin text", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 12 Tf 10 150 Td <8081> Tj " +
+            "/F1 10 Tf [-250 (12)] TJ /F1 11 Tf (.) Tj /F1 10 Tf (50%) Tj " +
+            "0 -30 Td (12.50%) Tj /F1 12 Tf [-250 <8081>] TJ " +
+            "0 -30 Td <8081> Tj /F1 10 Tf [-250 (AB)] TJ " +
+            "/F1 11 Tf [-250 (CD)] TJ /F1 12 Tf [-250 <8283>] TJ ET",
+          fontEncoding(Array(100).fill(500), hebrewLetters, 32)
+        );
+
+        for (const includeTextLayerFonts of [false, true]) {
+          const items = await getItems(pdfPage, includeTextLayerFonts);
+          expect(mergeText(items)).toBe("12.50% בא\nבא 12.50%\nדג AB CD בא");
+        }
+      });
+
+      it("fits a trailing space without changing existing word gaps", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td [(A) -900 (B)] TJ " +
+            "0 -30 Td [(A) -250 (B) -900 (C)] TJ ET"
+        );
+
+        const { items, styles } = await pdfPage.getTextContent({
+          includeTextLayerFonts: true,
+        });
+        expect(items.map(item => item.str)).toEqual(["A ", "B", "A B ", "C"]);
+        const [first, second, third, fourth] = items;
+        const font = new FontTestData(
+          styles[first.fontName].textLayerFont.data
+        );
+        expect(third.textLayerStr).toBe("A B\u2002");
+        expect(third.wordSpacing + font.getAdvance(0x20) / 1000).toBeCloseTo(
+          0.25,
+          3
+        );
+        expect(font.getAdvance(0x2002)).toBeCloseTo(900, 0);
+        expect(third.transform[4] + third.width).toBeCloseTo(
+          fourth.transform[4],
+          6
+        );
+        expect(first.wordSpacing + font.getAdvance(0x20) / 1000).toBeCloseTo(
+          0.9,
+          3
+        );
+        expect(first.transform[4] + first.width).toBeCloseTo(
+          second.transform[4],
+          6
+        );
+      });
+
+      it("keeps RTL runs in reading order across font size changes", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 10 Tf 10 150 Td [<80> -900 <81>] TJ " +
+            "/F1 14 Tf 1 0 0 1 35 151 Tm <8081> Tj " +
+            "/F1 12 Tf 1 0 0 1 55 150 Tm <8283> Tj " +
+            "1 0 0 1 55 120 Tm <8283> Tj " +
+            "/F1 14 Tf 1 0 0 1 41 120 Tm <8081> Tj ET",
+          hebrewFont
+        );
+
+        for (const includeTextLayerFonts of [false, true]) {
+          const items = await getItems(pdfPage, includeTextLayerFonts);
+          // The first line was painted left to right. Fitting splits its
+          // leftmost run at the gap. The second line was painted right to left.
+          const end = items.findIndex(item => item.hasEOL);
+          const firstLine = items.slice(0, end + 1);
+          expect(firstLine.map(item => item.str).join("")).toBe("דג בא ב א");
+          expect(firstLine[0].transform[4]).toBe(55);
+          expect(firstLine.at(-1).transform[4]).toBe(10);
+          expect(items.slice(end + 1).map(item => item.str)).toEqual([
+            "דג",
+            "בא",
+          ]);
+        }
+      });
+
+      it("gets text content, with the gaps as spaces in the fonts of the text layer", async function () {
+        const content =
+          "BT /F1 20 Tf 10 150 Td [(A) -300 (B) -300 (A) -400 (B)] TJ ET";
+        const pdfPage = await loadTextPage(content);
+
+        const { items, styles } = await pdfPage.getTextContent({
+          includeTextLayerFonts: true,
+        });
+
+        expect(items.map(({ str }) => str).join("")).toEqual("A B A B");
+        // No space is drawn: the spaces get the median gap.
+        const font = new FontTestData(
+          styles[items[0].fontName].textLayerFont.data
+        );
+        expect(font.getAdvance(0x20)).toBeCloseTo(300, 0);
+        expect(font.getAdvance(0x41)).toBeCloseTo(667, 0);
+      });
+
+      it("fits exceptional word gaps with fixed-width spaces in the text layer", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf 10 150 Td [(5) -167 (cMpc. This allows)] TJ " +
+            "/F1 10 Tf 0 -30 Td [(A ) -75 (B C D E F G H)] TJ ET"
+        );
+
+        const { items, styles } = await pdfPage.getTextContent({
+          includeTextLayerFonts: true,
+        });
+
+        expect(items.length).toBe(2);
+        const [item, second] = items;
+        expect(item.str).toBe("5 cMpc. This allows");
+        expect(item.textLayerStr).toBe("5\u2002cMpc. This allows");
+        const font = new FontTestData(styles[item.fontName].textLayerFont.data);
+        expect(font.getAdvance(0x2002)).toBeCloseTo(165, 0);
+        // At 10 pt the extra gap is only 0.75 pt. Keep it before B instead
+        // of distributing it over all seven spaces.
+        expect(second.str).toBe("A B C D E F G H");
+        expect(second.textLayerStr).toBe("A\u2003B C D E F G H");
+        expect(second.wordSpacing).toBe(0);
+        expect(font.getAdvance(0x2003)).toBeCloseTo(355, 0);
+      });
+
+      it("gets text content, with the fonts of the text layer for a vertical text", async function () {
+        const pdfPage = await loadPage(
+          buildGetDocumentParams("vertical.pdf", {
+            cMapUrl: CMAP_URL,
+            useWorkerFetch: false,
+          })
+        );
+
+        const { items, styles } = await pdfPage.getTextContent({
+          disableNormalization: true,
+          includeTextLayerFonts: true,
+        });
+
+        const item = items.find(
+          ({ str }) => str === "\u3042\u3044\u3046\u3048\u304a"
+        );
+        const { vertical, textLayerFont } = styles[item.fontName];
+        expect(vertical).toBeTrue();
+        // Centered on the column, with the vertical advances.
+        expect(textLayerFont.ascent).toEqual(0.5);
+        expect(
+          new FontTestData(textLayerFont.data).getAdvance(0x3042, true)
+        ).toBeCloseTo(1000, 0);
+        expect(item.dir).toBe("ttb");
+        expect(item.letterSpacing).toBe(0);
+        expect(item.height).toBeCloseTo(
+          5 * Math.hypot(...item.transform.slice(2, 4)),
+          1
+        );
+      });
+
+      it("fits vertical character spacing and TJ gaps along the column", async function () {
+        const content =
+          "BT /F1 20 Tf 50 Tz -2 Tc 90 180 Td " +
+          "[<30423044> 350 <3046>] TJ " +
+          "0 1 -1 0 20 80 Tm [100 <3048304a> 800 <3042>] TJ ET";
+        const data = buildVerticalTextPdf(content);
+        const pdfPage = await loadPage({
+          data,
+          cMapUrl: CMAP_URL,
+          useWorkerFetch: false,
+        });
+
+        for (const includeTextLayerFonts of [false, true]) {
+          const items = await getItems(pdfPage, includeTextLayerFonts);
+          expect(items.map(item => item.str).join("")).toEqual(
+            "あい うえお あ"
+          );
+          const [first, rotated] = items;
+          expect(first.dir).toBe("ttb");
+          expect(first.hasEOL).toBeTrue();
+          expect(first.transform).toEqual([10, 0, 0, 20, 90, 180]);
+          expect(first.width).toBe(10);
+          expect(first.height).toBeCloseTo(65, 6);
+          expect(rotated.transform).toEqual([0, 10, -20, 0, 22, 80]);
+          if (includeTextLayerFonts) {
+            // The large TJ gap splits the rotated column at x = 60.
+            expect(rotated.height).toBeCloseTo(38, 6);
+            const [, , space, last] = items;
+            expect(space.str).toBe(" ");
+            expect(space.dir).toBe("ttb");
+            expect(space.transform).toEqual([0, 10, -20, 0, 60, 80]);
+            expect(space.height).toBeCloseTo(18, 6);
+            expect(last.transform).toEqual([0, 10, -20, 0, 78, 80]);
+            expect(first.letterSpacing).toBeCloseTo(0.1, 3);
+            expect(first.wordSpacing).toBeCloseTo(-0.55, 3);
+          } else {
+            expect(rotated.height).toBeCloseTo(74, 6);
+          }
+        }
+      });
+
+      it("provides the generated font advance for mirrored text", async function () {
+        const pdfPage = await loadTextPage(
+          "BT /F1 20 Tf -1 0 0 1 150 150 Tm (ABC) Tj ET"
+        );
+
+        const { items } = await pdfPage.getTextContent({
+          includeTextLayerFonts: true,
+        });
+
+        expect(items.length).toBe(1);
+        const [item] = items;
+        expect(item.str).toBe("CBA");
+        expect(item.letterSpacing).toBeUndefined();
+        expect(item.textLayerAdvance * 20).toBeCloseTo(item.width, 1);
+      });
     });
 
     it("gets text content, with no extra spaces (issue 13226)", async function () {
@@ -5403,6 +5779,11 @@ page 1 / 3`);
       expect(text).toEqual(
         "Mitarbeiterinnen und Mitarbeiter arbeiten in über 100 Ländern engagiert im Dienste"
       );
+      const { items: textLayerItems } = await pdfPage.getTextContent({
+        includeMarkedContent: true,
+        includeTextLayerFonts: true,
+      });
+      expect(mergeText(textLayerItems)).toEqual(text);
 
       await loadingTask.destroy();
     });
@@ -5631,6 +6012,17 @@ ABCD E`);
       const text = mergeText(items);
 
       expect(text).toEqual("AB CD");
+
+      const { items: fitted, styles } = await pdfPage.getTextContent({
+        includeTextLayerFonts: true,
+      });
+      const { data, advanceScale, ascent } =
+        styles[fitted[0].fontName].textLayerFont;
+      // The rectangles extend from the baseline to the top of the font box.
+      expect(ascent).toBe(1);
+      expect(new FontTestData(data).getAdvance(0x41) * advanceScale).toBe(
+        80000
+      );
 
       await loadingTask.destroy();
     });

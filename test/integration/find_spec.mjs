@@ -115,6 +115,153 @@ describe("find bar", () => {
     });
   });
 
+  describe("highlight in marked content", () => {
+    const selector = ".textLayer .markedContent span:not(.markedContent)";
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "marked_content_letter_spacing.pdf",
+        selector,
+        100,
+        undefined,
+        { newTextLayerMode: 1 }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("must keep the letter spacing of the highlighted text", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          const getWidth = () =>
+            page.$eval(selector, span => span.getBoundingClientRect().width);
+          const width = await getWidth();
+
+          await search(page, "BC");
+          const spacing = await page.evaluate(() => {
+            const highlight = document.querySelector(".textLayer .highlight");
+            return {
+              span: getComputedStyle(highlight.parentElement).letterSpacing,
+              highlight: getComputedStyle(highlight).letterSpacing,
+            };
+          });
+          expect(parseFloat(spacing.span))
+            .withContext(`In ${browserName}`)
+            .toBeGreaterThan(0);
+          expect(spacing.highlight)
+            .withContext(`In ${browserName}`)
+            .toEqual(spacing.span);
+          fuzzyMatch(await getWidth(), width, browserName, 0.5);
+        })
+      );
+    });
+  });
+
+  describe("highlight in kerned text", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "text_layer_kerning.pdf",
+        ".textLayer .endOfContent",
+        100,
+        undefined,
+        { newTextLayerMode: 1 }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("must keep the kerning around the highlighted text", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          const span = await page.$(".textLayer span");
+          expect(await span.evaluate(element => element.textContent))
+            .withContext(browserName)
+            .toEqual("AVAV");
+          const getWidth = () =>
+            span.evaluate(element => element.getBoundingClientRect().width);
+          const width = await getWidth();
+          const offset = await span.evaluate(element => {
+            const range = document.createRange();
+            range.setStart(element.firstChild, 1);
+            range.setEnd(element.firstChild, 2);
+            return (
+              range.getBoundingClientRect().left -
+              element.getBoundingClientRect().left
+            );
+          });
+          // The first A is 667 units wide with a -200 unit adjustment.
+          const expectedOffset = ((667 - 200) / 1000) * 40 * (96 / 72);
+          fuzzyMatch(offset, expectedOffset, browserName, 0.25);
+
+          await search(page, "V");
+          fuzzyMatch(await getWidth(), width, browserName, 0.5);
+          const highlightOffset = await span.evaluate(element => {
+            const highlight = element.querySelector(".highlight");
+            return (
+              highlight.getBoundingClientRect().left -
+              element.getBoundingClientRect().left
+            );
+          });
+          fuzzyMatch(highlightOffset, expectedOffset, browserName, 0.25);
+        })
+      );
+    });
+  });
+
+  describe("search in Arabic text drawn in reading order", () => {
+    let pages;
+
+    beforeEach(async () => {
+      pages = await loadAndWait(
+        "arabic_rtl_logical_order.pdf",
+        ".textLayer .endOfContent",
+        100,
+        undefined,
+        { newTextLayerMode: 1 }
+      );
+    });
+
+    afterEach(async () => {
+      await closePages(pages);
+    });
+
+    it("highlights a partial phrase across an RTL word boundary", async () => {
+      // The PDF uses two contextual forms of kaf at the start of the query.
+      const query = "ﻛﻜﻠﻤﺔ ﺗﺮ";
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await search(page, query);
+          const highlights = await page.$$(".textLayer .highlight.selected");
+          expect(highlights.length).withContext(browserName).toBe(1);
+          const [highlight] = highlights;
+          expect(await highlight.evaluate(el => el.textContent))
+            .withContext(browserName)
+            .toBe(query);
+
+          // In the 315-point excerpt, the first kaf ends at x=65.72 and
+          // the final reh starts at x=32.76.
+          const layerBox = await (await page.$(".textLayer")).boundingBox();
+          const box = await highlight.boundingBox();
+          const scale = layerBox.width / 315;
+          fuzzyMatch((box.x - layerBox.x) / scale, 32.76, browserName, 0.5);
+          fuzzyMatch(
+            (box.x + box.width - layerBox.x) / scale,
+            65.72,
+            browserName,
+            0.5
+          );
+        })
+      );
+    });
+  });
+
   describe("search with no search results", () => {
     let pages;
 

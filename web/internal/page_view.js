@@ -647,10 +647,6 @@ class PageView {
   async #buildTextLayer(scale) {
     const container = document.createElement("div");
     container.className = "textLayer";
-    // --total-scale-factor is required by text_layer_builder.css to compute
-    // font sizes. setLayerDimensions (called inside TextLayer) consumes it but
-    // never sets it, so we must provide it here.
-    container.style.setProperty("--total-scale-factor", scale);
     container.style.setProperty("--scale-round-x", "1px");
     container.style.setProperty("--scale-round-y", "1px");
     document.getElementById("canvas-wrapper").append(container);
@@ -771,8 +767,10 @@ class PageView {
     // by updating the CSS variable and calling update() — no rebuild needed.
     // If the filter is now off, discard any existing layer.
     if (this.#textFilter) {
+      document
+        .getElementById("canvas-wrapper")
+        .style.setProperty("--total-scale-factor", scale * viewport.userUnit);
       if (this.#textLayerInstance) {
-        this.#textLayerEl.style.setProperty("--total-scale-factor", scale);
         this.#textLayerInstance.update({
           viewport: this.#renderedPage.getViewport({ scale }),
         });

@@ -19,6 +19,7 @@ import {
   TextLayerFonts,
 } from "../../src/core/text_layer_font.js";
 import { FontTestData } from "./font_test_utils.js";
+import { TextExtraction } from "../../src/core/text_extraction.js";
 
 const idFactory = {
   getDocId: () => "g_d0",
@@ -34,15 +35,11 @@ function getTextLayerFont(
   glyphs,
   { font = { ascent: 0.8, descent: -0.2 }, drawBoxes = false } = {}
 ) {
-  const sink = createSink();
-  const textLayerFonts = new TextLayerFonts(sink, idFactory, drawBoxes);
-  textLayerFonts.addFont("f1", font);
+  const textLayerFonts = new TextLayerFonts(idFactory, drawBoxes);
   for (const [unicode, advance] of glyphs) {
     textLayerFonts.addGlyph(font, unicode, advance);
   }
-  textLayerFonts.enqueue({ items: [], styles: { f1: {} } });
-  textLayerFonts.send();
-  return sink.chunks[0].styles.f1.textLayerFont;
+  return textLayerFonts.build(font).style;
 }
 
 function expectAdvances(font, advances) {
@@ -200,6 +197,37 @@ describe("text layer font", function () {
     ]);
   });
 
+  it("compensates for the advance of a normalized ligature with kerning", function () {
+    const { data } = getTextLayerFont([
+      ["f", 300],
+      ["i", 220],
+      ["fi", 480],
+    ]);
+    const font = new FontTestData(data);
+    const pairs = font.getKerningPairs();
+    expect(pairs.length).toEqual(1);
+    const [[left, right, value]] = pairs;
+    expect(left).toEqual(font.getGlyphId(0x66));
+    expect(right).toEqual(font.getGlyphId(0x69));
+    expect(value).toBeCloseTo(-40, 0);
+  });
+
+  it("includes the Thai and Lao SARA AM shaping components", function () {
+    const { data } = getTextLayerFont([
+      ["\u0e33", 500],
+      ["\u0eb3", 450],
+      ["\u0eb2", 400],
+    ]);
+    expectAdvances(new FontTestData(data), [
+      [0x0e33, 500],
+      [0x0e4d, 0],
+      [0x0e32, 500],
+      [0x0eb3, 450],
+      [0x0ecd, 0],
+      [0x0eb2, 400],
+    ]);
+  });
+
   it("gets the ascent from the font, else from its bounding box", function () {
     const getAscent = font => getTextLayerFont([["a", 500]], { font }).ascent;
 
@@ -222,6 +250,14 @@ describe("text layer font", function () {
     expect(getAscent({ ascent: 0, descent: 0, bbox: [0, 0, 0, 0] })).toEqual(
       0.8
     );
+    // A Type 3 drawing can also lie entirely below the baseline.
+    expect(
+      getAscent({
+        isType3Font: true,
+        bbox: [0, 0, 80, 100],
+        fontMatrix: [1, 0, 0, -1, 0, 0],
+      })
+    ).toBe(0);
     // Vertical glyphs are centered on their column.
     expect(getAscent({ ascent: 0.9, descent: -0.3, vertical: true })).toEqual(
       0.5
@@ -231,34 +267,169 @@ describe("text layer font", function () {
   it("only builds the fonts of the styles", function () {
     const sink = createSink();
     let id = 0;
-    const textLayerFonts = new TextLayerFonts(sink, {
+    const extraction = new TextExtraction(sink, {
       getDocId: () => "g_d0",
       createFontId: () => `f${++id}`,
     });
     const font1 = { ascent: 0.8, descent: -0.2 };
     const font2 = { ascent: 0.8, descent: -0.2 };
-    textLayerFonts.addFont("f1", font1);
-    textLayerFonts.addGlyph(font1, "a", 500);
+    extraction.addFont("f1", font1);
+    extraction.fonts.addGlyph(font1, "a", 500);
     // E.g. a font with the same name as the one of the current item.
-    textLayerFonts.addGlyph(font2, "b", 500);
-    textLayerFonts.enqueue({ items: [], styles: { f1: {} } });
-    textLayerFonts.send();
+    extraction.fonts.addGlyph(font2, "b", 500);
+    extraction.enqueue({ items: [], styles: { f1: {} } });
+    extraction.send();
 
     expect(sink.chunks[0].styles.f1.textLayerFont.name).toEqual("g_d0_tf1");
     expect(id).toEqual(1);
   });
 
+  describe("font reuse", function () {
+    let cacheIdFactory, font;
+
+    beforeEach(function () {
+      let id = 0;
+      cacheIdFactory = {
+        getDocId: () => "g_d0",
+        createFontId: () => `f${++id}`,
+      };
+      font = { ascent: 0.8, descent: -0.2 };
+    });
+
+    function createPageFonts(glyphs, drawBoxes = false) {
+      const fonts = new TextLayerFonts(cacheIdFactory, drawBoxes);
+      for (const [unicode, width] of glyphs) {
+        fonts.addGlyph(font, unicode, width);
+      }
+      return fonts;
+    }
+
+    it("grows glyph coverage and reuses a font that covers the page", function () {
+      const first = createPageFonts([["a", 500]]).build(font);
+      const second = createPageFonts([["b", 600]]).build(font);
+      const third = createPageFonts([
+        ["a", 500],
+        ["b", 600],
+      ]).build(font);
+
+      expect(second.style.name).not.toEqual(first.style.name);
+      expect(third.style.name).toEqual(second.style.name);
+      expect(third.style.data).toBe(second.style.data);
+      expectAdvances(new FontTestData(second.style.data), [
+        [0x61, 500],
+        [0x62, 600],
+      ]);
+      expect(first.advances.has(0x62)).toBeFalse();
+    });
+
+    it("keeps fonts with different advances, kerning, or outlines separate", function () {
+      const fonts = createPageFonts([
+        ["a", 500],
+        ["b", 600],
+      ]);
+      fonts.addKerning(font, 0x61, 0x62, -50);
+      const kerned = fonts.build(font);
+      const unkerned = createPageFonts([
+        ["a", 500],
+        ["b", 600],
+      ]).build(font);
+      const different = createPageFonts([
+        ["a", 550],
+        ["b", 600],
+      ]).build(font);
+      const debug = createPageFonts(
+        [
+          ["a", 500],
+          ["b", 600],
+        ],
+        true
+      ).build(font);
+
+      expect(
+        new Set([kerned, unkerned, different, debug].map(f => f.style.name))
+          .size
+      ).toBe(4);
+      expect(new FontTestData(kerned.style.data).getKerningPairs().length).toBe(
+        1
+      );
+      expect(new FontTestData(unkerned.style.data).getKerningPairs()).toEqual(
+        []
+      );
+      expect(
+        new FontTestData(different.style.data).getAdvance(0x61)
+      ).toBeCloseTo(550, 0);
+      expect(
+        new FontTestData(debug.style.data).tables.get("glyf").length
+      ).toBeGreaterThan(1);
+    });
+
+    it("keeps GPOS kerning when earlier pages also use other scripts", function () {
+      const latin = [
+        ["a", 500],
+        ["b", 600],
+      ];
+      const first = createPageFonts([...latin, ["א", 500]]);
+      first.addKerning(font, 0x61, 0x62, -50);
+      const second = createPageFonts(latin);
+      second.addKerning(font, 0x61, 0x62, -50);
+
+      const firstFont = new FontTestData(first.build(font).style.data);
+      const secondFont = new FontTestData(second.build(font).style.data);
+      expect(firstFont.tables.has("kern")).toBeTrue();
+      expect(secondFont.tables.has("GPOS")).toBeTrue();
+    });
+
+    it("keeps fitted spaces independent of the fonts on earlier pages", function () {
+      const first = createPageFonts([
+        ["a", 500],
+        ["\u2002", 450],
+      ]).build(font);
+      const pageFonts = createPageFonts([["a", 500]]);
+      const metrics = pageFonts.getMetrics(font);
+      expect(metrics.advances.has(0x2002)).toBeFalse();
+      metrics.advances.set(0x2002, 300);
+      const second = pageFonts.build(font, metrics);
+
+      expect(second.style.name).not.toEqual(first.style.name);
+      expect(first.advances.get(0x2002)).toBe(450);
+      expect(
+        new FontTestData(second.style.data).getAdvance(0x2002)
+      ).toBeCloseTo(300, 0);
+    });
+
+    it("keeps the original glyph coverage for combining sequences", function () {
+      const first = createPageFonts([["á", 500]]).build(font);
+      const second = createPageFonts([["a\u0301", 500]]).build(font);
+
+      expect(first.advances.has(0xe1)).toBeTrue();
+      expect(second.advances.has(0xe1)).toBeFalse();
+      expect(second.advances.has(0x301)).toBeTrue();
+    });
+
+    it("keeps the original glyph coverage for mirrored characters in RTL", function () {
+      const first = createPageFonts([[")", 300]]).build(font);
+      const second = createPageFonts([
+        ["א", 500],
+        ["(", 300],
+      ]).build(font);
+
+      expect(first.advances.has(0x29)).toBeTrue();
+      expect(second.advances.has(0x29)).toBeFalse();
+      expect(second.advances.has(0x28)).toBeTrue();
+    });
+  });
+
   it("stops the text content extraction when its stream is cancelled", async function () {
     const sink = createSink();
-    const textLayerFonts = new TextLayerFonts(sink, idFactory);
-    await expectAsync(textLayerFonts.ready).toBeResolved();
-    textLayerFonts.enqueue({ items: [], styles: {} });
+    const extraction = new TextExtraction(sink, idFactory);
+    await expectAsync(extraction.ready).toBeResolved();
+    extraction.enqueue({ items: [], styles: {} });
 
     sink.isCancelled = true;
-    await expectAsync(textLayerFonts.ready).toBeRejectedWith(
+    await expectAsync(extraction.ready).toBeRejectedWith(
       jasmine.any(AbortException)
     );
-    textLayerFonts.send();
+    extraction.send();
     expect(sink.chunks).toEqual([]);
   });
 });

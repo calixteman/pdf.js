@@ -14,7 +14,12 @@
  */
 
 .textLayer {
+  --layer-zoom: var(--total-scale-factor, 1);
+  /* Keep highlight decorations and debug borders in screen pixels. */
+  --text-layer-screen-px: calc(1px / var(--layer-zoom));
+
   color-scheme: only light;
+  zoom: var(--layer-zoom);
 
   position: absolute;
   text-align: initial;
@@ -48,25 +53,21 @@
     color: red;
   }
 
-  /* We multiply the font size by --min-font-size, and then scale the text
-   * elements by 1/--min-font-size. This allows us to effectively ignore the
-   * minimum font size enforced by the browser, so that the text layer <span>s
-   * can always match the size of the text in the canvas. */
-  --min-font-size: 1;
-  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-  --min-font-size-inv: calc(1 / var(--min-font-size));
+  &.newTextLayer {
+    font-kerning: normal;
+    font-variant-ligatures: none;
+
+    .vertical {
+      writing-mode: vertical-rl;
+      text-orientation: upright;
+      font-feature-settings: "vkrn";
+      cursor: vertical-text;
+    }
+  }
 
   > :not(.markedContent),
   .markedContent span:not(.markedContent) {
     z-index: 1;
-
-    --font-height: 0; /* set by text_layer.js */
-    font-size: calc(var(--text-scale-factor) * var(--font-height));
-
-    --scale-x: 1;
-    --rotate: 0deg;
-    transform: rotate(var(--rotate)) scaleX(var(--scale-x))
-      scale(var(--min-font-size-inv));
   }
 
   .markedContent {
@@ -93,22 +94,24 @@
       );
     }
 
-    margin: -1px;
-    padding: 1px;
+    --highlight-radius: calc(4 * var(--text-layer-screen-px));
+
+    margin: calc(-1 * var(--text-layer-screen-px));
+    padding: var(--text-layer-screen-px);
     background-color: var(--highlight-bg-color);
     backdrop-filter: var(--highlight-backdrop-filter);
-    border-radius: 4px;
+    border-radius: var(--highlight-radius);
 
     &.appended {
       position: initial;
     }
 
     &.begin {
-      border-radius: 4px 0 0 4px;
+      border-radius: var(--highlight-radius) 0 0 var(--highlight-radius);
     }
 
     &.end {
-      border-radius: 0 4px 4px 0;
+      border-radius: 0 var(--highlight-radius) var(--highlight-radius) 0;
     }
 
     &.middle {
@@ -118,7 +121,21 @@
     &.selected {
       background-color: var(--highlight-selected-bg-color);
       backdrop-filter: var(--highlight-selected-backdrop-filter);
-      scroll-margin-top: 50px;
+      scroll-margin-top: calc(50 * var(--text-layer-screen-px));
+    }
+  }
+
+  /* Paint the outline without breaking kerning across an inline highlight. */
+  @media (forced-colors: none) {
+    &.newTextLayer .highlight {
+      margin: 0;
+      padding: 0;
+      box-shadow: 0 0 0 var(--text-layer-screen-px) var(--highlight-bg-color);
+
+      &.selected {
+        box-shadow: 0 0 0 var(--text-layer-screen-px)
+          var(--highlight-selected-bg-color);
+      }
     }
   }
 

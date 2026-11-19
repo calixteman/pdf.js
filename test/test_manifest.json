@@ -1015,6 +1015,14 @@
     "textLayerFonts": true
   },
   {
+    "id": "arabic-rtl-logical-order-text",
+    "file": "pdfs/arabic_rtl_logical_order.pdf",
+    "md5": "6e43d72a7a15b2fbdb2bc86c14566611",
+    "rounds": 1,
+    "type": "text",
+    "textLayerFonts": true
+  },
+  {
     "id": "complexttffont-pdf",
     "file": "pdfs/complex_ttf_font.pdf",
     "md5": "76de93f9116b01b693bf8583b3e76d91",

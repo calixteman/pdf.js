@@ -1200,8 +1200,12 @@ class PDFDocumentProxy {
  * @property {boolean} [disableNormalization] - When true the text is *not*
  *   normalized in the worker-thread. The default is `false`.
  * @property {boolean} [includeTextLayerFonts] - When true include, in the
- *   styles, the fonts to use in the text layer, see {@link TextLayerFont}.
+ *   styles, the fonts to use in the text layer, see {@link TextLayerFont},
+ *   and fit text items to the PDF glyph positions.
  *   The default is `false`.
+ * @property {boolean} [useTextLayerExtraction] - Use the same word and line
+ *   breaks as the text layer with `includeTextLayerFonts` enabled, without
+ *   generating the fonts. The default is `false`.
  * @property {boolean} [debugTextLayerFonts] - When true, the glyphs of the
  *   text layer fonts are the outlines of their boxes. The default is `false`.
  */
@@ -1228,6 +1232,12 @@ class PDFDocumentProxy {
  * @property {string} fontName - Font name used by PDF.js for converted font.
  * @property {boolean} hasEOL - Indicating if the text content is followed by a
  *   line-break.
+ * @property {number} [letterSpacing] - Additional letter spacing, in em.
+ * @property {number} [wordSpacing] - Additional word spacing, in em.
+ * @property {number} [textLayerAdvance] - Width of the unspaced text in the
+ *   generated font, in em.
+ * @property {string} [textLayerStr] - Text with fixed-width spaces for
+ *   rendering with the generated font. It has the same length as `str`.
  */
 
 /**
@@ -1256,6 +1266,8 @@ class PDFDocumentProxy {
  * @property {string} name - Font family name.
  * @property {Uint8Array} data - TrueType font.
  * @property {number} ascent - Fraction of the em above the baseline.
+ * @property {number} [advanceScale] - Multiplier from encoded to PDF advances.
+ * @property {boolean} [vertical] - The font provides native vertical metrics.
  */
 
 /**
@@ -1795,6 +1807,7 @@ class PDFPageProxy {
     disableNormalization,
     includeTextLayerFonts,
     debugTextLayerFonts,
+    useTextLayerExtraction,
   } = {}) {
     const TEXT_CONTENT_CHUNK_SIZE = 100;
 
@@ -1807,6 +1820,7 @@ class PDFPageProxy {
         disableNormalization: disableNormalization === true,
         includeTextLayerFonts: includeTextLayerFonts === true,
         debugTextLayerFonts: debugTextLayerFonts === true,
+        useTextLayerExtraction: useTextLayerExtraction === true,
       },
       {
         highWaterMark: TEXT_CONTENT_CHUNK_SIZE,

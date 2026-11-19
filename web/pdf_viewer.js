@@ -815,6 +815,8 @@ class PDFViewer {
   async getAllText(interruptSignal = null) {
     const texts = [];
     const buffer = [];
+    const useTextLayerExtraction =
+      this.#newTextLayerMode === 1 || this.#newTextLayerMode === 2;
     for (
       let pageNum = 1, pagesCount = this.pdfDocument.numPages;
       pageNum <= pagesCount;
@@ -827,7 +829,10 @@ class PDFViewer {
       const page = await this.pdfDocument.getPage(pageNum);
       // By default getTextContent pass disableNormalization equals to false
       // which is fine because we want a normalized string.
-      const { items } = await page.getTextContent();
+      const { items } = await page.getTextContent({
+        includeMarkedContent: useTextLayerExtraction,
+        useTextLayerExtraction,
+      });
       for (const item of items) {
         if (item.str) {
           buffer.push(item.str);
@@ -1156,7 +1161,10 @@ class PDFViewer {
           if (pdfDocument !== this.pdfDocument) {
             return; // The document was closed while the first page rendered.
           }
-          this.findController?.setDocument(pdfDocument); // Enable searching.
+          this.findController?.setDocument(
+            pdfDocument,
+            this.#newTextLayerMode === 1 || this.#newTextLayerMode === 2
+          );
           this._scriptingManager?.setDocument(pdfDocument); // Enable scripting.
 
           if (this.#hiddenCopyElement) {

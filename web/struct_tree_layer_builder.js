@@ -491,13 +491,12 @@ class StructTreeLayerBuilder {
     img.setAttribute("role", "img");
     img.setAttribute("aria-label", removeNullCharacters(alt));
 
-    const { pageHeight, pageX, pageY } = this.#rawDims;
-    const calc = "calc(var(--total-scale-factor) *";
+    const { pageWidth, pageHeight, pageX, pageY } = this.#rawDims;
     const { style } = img;
-    style.width = `${calc}${bbox[2] - bbox[0]}px)`;
-    style.height = `${calc}${bbox[3] - bbox[1]}px)`;
-    style.left = `${calc}${bbox[0] - pageX}px)`;
-    style.top = `${calc}${pageHeight - bbox[3] + pageY}px)`;
+    style.width = `${(100 * (bbox[2] - bbox[0])) / pageWidth}%`;
+    style.height = `${(100 * (bbox[3] - bbox[1])) / pageHeight}%`;
+    style.left = `${(100 * (bbox[0] - pageX)) / pageWidth}%`;
+    style.top = `${(100 * (pageHeight - bbox[3] + pageY)) / pageHeight}%`;
 
     return true;
   }

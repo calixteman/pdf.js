@@ -201,7 +201,7 @@
   }
 
   &.show-span-borders .textLayer :is(span, br) {
-    outline: 1px solid
+    outline: var(--text-layer-screen-px, 1px) solid
       color-mix(in srgb, var(--text-layer-color, #c03030) 60%, black);
   }
 }

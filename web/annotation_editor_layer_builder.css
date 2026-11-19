@@ -36,16 +36,37 @@
   --resizer-border-radius: 2px;
   --editorFreeText-editing-cursor: text;
   --editorInk-editing-cursor: url(images/cursor-editorInk.svg) 0 16, pointer;
-  --editorHighlight-editing-cursor:
-    url(images/cursor-editorTextHighlight.svg) 24 24, text;
-  --editorFreeHighlight-editing-cursor:
-    url(images/cursor-editorFreeHighlight.svg) 1 18, pointer;
 
   --new-alt-text-warning-image: url(images/altText_warning.svg);
 }
 
 .textLayer {
+  /* Keep the floating selection toolbar at the viewer's UI size. */
+  > .editToolbar {
+    zoom: calc(1 / var(--layer-zoom));
+  }
+
   &.highlighting {
+    /* Firefox applies CSS zoom to cursor images. Match their resolution to
+       the layer zoom so the artwork stays aligned with its hotspot. */
+    @supports (-moz-appearance: none) {
+      --highlight-cursor-resolution: calc(var(--layer-zoom) * 1dppx);
+    }
+
+    --editorHighlight-editing-cursor:
+      image-set(
+          url(images/cursor-editorTextHighlight.svg)
+            var(--highlight-cursor-resolution, 1dppx)
+        )
+        24 24,
+      text;
+    --editorFreeHighlight-editing-cursor:
+      image-set(
+          url(images/cursor-editorFreeHighlight.svg)
+            var(--highlight-cursor-resolution, 1dppx)
+        )
+        1 18,
+      pointer;
     cursor: var(--editorFreeHighlight-editing-cursor);
 
     &:not(.free) span {
